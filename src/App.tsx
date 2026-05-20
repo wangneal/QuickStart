@@ -365,9 +365,10 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
                 onDragOver={e => onDragOverTab(e, cat)}
                 onDragLeave={onDragLeaveTab}
                 onDrop={e => onDropOnTab(e, cat)}>
-                <div className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-all ${activeCategory === cat ? "bg-primary text-primary-foreground" : dragOverCat === cat && dragAppId ? "ring-2 ring-primary bg-secondary" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
+                <button onClick={() => setActiveCategory(cat)}
+                  className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-all ${activeCategory === cat ? "bg-primary text-primary-foreground" : dragOverCat === cat && dragAppId ? "ring-2 ring-primary bg-secondary" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
                   {cat}
-                </div>
+                </button>
               </div>
             ))}
           </div>

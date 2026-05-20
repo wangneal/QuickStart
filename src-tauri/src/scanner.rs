@@ -24,7 +24,10 @@ fn is_system_app(name: &str, path: &str) -> bool {
         "services","windows update","windows security","windows defender",
         "windows firewall","控制面板","命令提示符","任务管理器","资源监视器",
         "事件查看器","计算机管理","磁盘管理","设备管理器","windows powershell",
-        "windows 更新","windows 安全中心","windows 防火墙","运行"];
+        "windows 更新","windows 安全中心","windows 防火墙","运行",
+        "uninstall","unins","卸载","setup","setup.exe","安装",
+        "config","configure","配置","readme","help","manual","手册",
+        "readme.txt","readme.md"];
     for kw in kws { if n.contains(kw) { return true; } }
     let sys = [r"c:\windows\", r"\windows powershell\", r"\administrative tools\"];
     for d in sys { if p.contains(d) { return true; } }
