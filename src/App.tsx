@@ -70,17 +70,17 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
 
   // 数据加载
   const loadApps = useCallback(async () => {
-    try { const list = await invoke<AppItem[]>("get_app_list"); if (list) setApps(list); } catch {}
+    try { const list = await invoke<AppItem[]>("get_app_list"); if (list) setApps(list); } catch (e) { console.warn("loadApps:", e); }
   }, [setApps]);
   const loadFolders = useCallback(async () => {
-    try { const list = await invoke<FolderItem[]>("get_folder_list"); if (list) setFolders(list); } catch {}
+    try { const list = await invoke<FolderItem[]>("get_folder_list"); if (list) setFolders(list); } catch (e) { console.warn("loadFolders:", e); }
   }, []);
   const doScan = useCallback(async () => {
     setScanning(true);
     try {
       const r = await invoke<{apps:any[];new_count:number}>("scan_apps");
       await invoke("classify_uncategorized");
-      try { await invoke("ai_classify_apps"); } catch {}
+      try { await invoke("ai_classify_apps"); } catch (e) { console.warn("ai classify skipped:", e); }
       await loadApps();
       showToast(`扫描完成，新增 ${r.new_count} 个应用${r.new_count > 0 ? ' 🎉' : ''}`, "ok");
     } catch { showToast("扫描失败", "err"); }
@@ -91,16 +91,19 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
   useEffect(() => {
     invoke<string>("check_update").then(v => {
       if (v && v !== "v0.1.0") showToast(`有新版本: ${v}`, "ok");
-    }).catch(() => {});
+    }).catch(e => { if (e !== "无法连接 GitHub") console.warn("update check:", e); });
   }, []);
 
   // 主题初始化
   useEffect(() => {
     invoke<string>("get_setting", { key: "theme" }).then(t => {
-      if (t === "dark") document.documentElement.classList.add("dark");
-      else if (t === "light") document.documentElement.classList.remove("dark");
-      else document.documentElement.classList.remove("dark");
-    }).catch(() => {});
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (t === "dark" || (t !== "light" && prefersDark)) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
+    }).catch(e => console.warn("theme init:", e));
   }, []);
 
   useEffect(() => { loadApps().then(() => { if (apps.length === 0) doScan(); }); loadFolders(); }, []);
@@ -241,7 +244,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
     try {
       const dataUrl = await invoke<string>("get_app_icon", { appId });
       setIconCache(prev => ({ ...prev, [appId]: dataUrl }));
-    } catch {}
+    } catch (e) { console.warn("loadIcon:", appId, e); }
   };
 
   useEffect(() => {
