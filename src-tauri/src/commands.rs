@@ -416,3 +416,20 @@ pub fn search_files(query: String) -> Result<Vec<FileResult>, String> {
 
     Ok(results)
 }
+
+/// 检查 GitHub 最新版本
+#[tauri::command]
+pub async fn check_update() -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build().map_err(|e| e.to_string())?;
+    let resp = client
+        .get("https://api.github.com/repos/wangneal/QuickStart/releases/latest")
+        .header("User-Agent", "QuickStart")
+        .header("Accept", "application/vnd.github.v3+json")
+        .send().await.map_err(|_| "无法连接 GitHub".to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|_| "解析响应失败".to_string())?;
+    let tag = json["tag_name"].as_str().unwrap_or("").to_string();
+    if tag.is_empty() { return Err("获取版本失败".into()); }
+    Ok(tag)
+}

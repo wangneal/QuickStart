@@ -129,7 +129,8 @@ export default function Settings({ onClose }: Props) {
           </section>
         </div>
 
-        <div className="border-t border-border px-5 py-3">
+        <div className="border-t border-border px-5 py-3 space-y-2">
+          <p className="text-[10px] text-muted-foreground text-center">主题即改即生效，快捷键和开机自启需要重启应用</p>
           <button onClick={save} className="w-full h-10 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity">
             {saved ? "✓ 已保存" : "保存设置"}
           </button>

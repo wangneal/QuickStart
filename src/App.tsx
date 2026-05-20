@@ -11,6 +11,13 @@ import {
 } from "lucide-react";
 
 // ---------- 工具函数 ----------
+function highlight(text: string, query: string): React.ReactNode {
+  if (!query) return <>{text}</>;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return <>{text}</>;
+  return <>{text.slice(0,idx)}<mark className="bg-primary/20 text-foreground rounded px-0.5">{text.slice(idx,idx+query.length)}</mark>{text.slice(idx+query.length)}</>;
+}
+
 function safeEval(expr: string): number | null {
   const s = expr.replace(/×/g,"*").replace(/÷/g,"/").replace(/\s/g,"").replace(/[^0-9+\-*/.()%]/g,"");
   if (!s || /^[+\-*/]/.test(s)) return null;
@@ -79,6 +86,22 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
     } catch { showToast("扫描失败", "err"); }
     finally { setScanning(false); }
   }, [loadApps]);
+
+  // 版本更新检查
+  useEffect(() => {
+    invoke<string>("check_update").then(v => {
+      if (v && v !== "v0.1.0") showToast(`有新版本: ${v}`, "ok");
+    }).catch(() => {});
+  }, []);
+
+  // 主题初始化
+  useEffect(() => {
+    invoke<string>("get_setting", { key: "theme" }).then(t => {
+      if (t === "dark") document.documentElement.classList.add("dark");
+      else if (t === "light") document.documentElement.classList.remove("dark");
+      else document.documentElement.classList.remove("dark");
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => { loadApps().then(() => { if (apps.length === 0) doScan(); }); loadFolders(); }, []);
   useEffect(() => { inputRef.current?.focus(); }, [view]);
@@ -172,13 +195,27 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
   };
   // ---------- 拖拽分类（HTML5 原生） ----------
   const [dragAppId, setDragAppId] = useState<number | null>(null);
-  const onDragOver = (e: React.DragEvent, cat: string) => {
+  const [dragOverCat, setDragOverCat] = useState<string | null>(null);
+
+  const onDragStart = (appId: number) => { setDragAppId(appId); };
+
+  const onDragOverTab = (e: React.DragEvent, cat: string) => {
     e.preventDefault();
+    setDragOverCat(cat);
+  };
+
+  const onDragLeaveTab = () => { setDragOverCat(null); };
+
+  const onDropOnTab = (e: React.DragEvent, cat: string) => {
+    e.preventDefault();
+    setDragOverCat(null);
     if (dragAppId !== null && cat && cat !== "全部") {
       invoke("update_app_category", { id: dragAppId, category: cat }).then(() => loadApps()).catch(() => {});
       setDragAppId(null);
     }
   };
+
+  const onDragEnd = () => { setDragAppId(null); setDragOverCat(null); };
 
   const hideWindow = async () => {
     const w = await import("@tauri-apps/api/window"); await w.getCurrentWindow().hide();
@@ -309,7 +346,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
                         ? <img src={iconCache[app.id]} alt="" className="w-full h-full object-contain" />
                         : <span>{app.name.charAt(0)}</span>}
                     </div>
-                    <span className="text-xs whitespace-nowrap">{app.name}</span>
+                    <span className="text-xs whitespace-nowrap">{highlight(app.name, searchQuery)}</span>
                   </button>
                 ))}
               </div>
@@ -324,13 +361,13 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
         <div className="px-4 pb-2 overflow-x-auto scrollbar-none">
           <div className="flex gap-1.5">
             {categories.filter(c => c !== "全部").map(cat => (
-              <div key={cat} className="relative" onDragOver={e => e.preventDefault()} onDrop={e => onDragOver(e, cat)}>
-                <div className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-colors ${activeCategory === cat ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
+              <div key={cat} className="relative"
+                onDragOver={e => onDragOverTab(e, cat)}
+                onDragLeave={onDragLeaveTab}
+                onDrop={e => onDropOnTab(e, cat)}>
+                <div className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-all ${activeCategory === cat ? "bg-primary text-primary-foreground" : dragOverCat === cat && dragAppId ? "ring-2 ring-primary bg-secondary" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
                   {cat}
                 </div>
-                {dragAppId !== null && (
-                  <div className="absolute inset-0 rounded-full ring-2 ring-primary ring-offset-1 pointer-events-none" />
-                )}
               </div>
             ))}
           </div>
@@ -395,7 +432,8 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
               return (
                 <button key={app.id}
                   draggable
-                  onDragStart={() => setDragAppId(app.id)}
+                  onDragStart={() => onDragStart(app.id)}
+                  onDragEnd={onDragEnd}
                   onClick={() => launchApp(app)}
                   onContextMenu={e => { e.preventDefault(); setCm({x:e.clientX, y:e.clientY, app}); }}
                   className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"} ${dragAppId === app.id ? "opacity-40" : ""}`}>
@@ -404,7 +442,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
                       ? <img src={iconCache[app.id]} alt={app.name} className="w-full h-full object-contain" />
                       : <span className="text-lg font-bold text-foreground">{app.name.charAt(0)}</span>}
                   </div>
-                  <span className="text-xs text-center text-muted-foreground truncate w-full leading-tight">{app.name}</span>
+                  <span className="text-xs text-center text-muted-foreground truncate w-full leading-tight">{highlight(app.name, searchQuery)}</span>
                   <span className="text-[9px] text-muted-foreground/50 truncate w-full">{app.category}</span>
                   {app.is_pinned && <Pin className="absolute top-1 right-1 w-3 h-3 text-primary" />}
                 </button>
