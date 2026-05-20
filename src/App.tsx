@@ -4,6 +4,7 @@ import { invoke } from "./lib/utils";
 import { useStore, type AppItem } from "./store";
 import AIChat from "./AIChat";
 import SettingsPanel from "./Settings";
+
 import {
   Search, Mic, Settings, X, Minus, Maximize2, Folder, Trash2, Pin, ScanLine,
   ExternalLink, Calculator, LayoutGrid, List, Plus, FolderPlus, FileType, Bot,
@@ -169,6 +170,16 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
   const openFile = async (path: string) => {
     try { const {open} = await import("@tauri-apps/plugin-shell"); await open(path); } catch {}
   };
+  // ---------- 拖拽分类（HTML5 原生） ----------
+  const [dragAppId, setDragAppId] = useState<number | null>(null);
+  const onDragOver = (e: React.DragEvent, cat: string) => {
+    e.preventDefault();
+    if (dragAppId !== null && cat && cat !== "全部") {
+      invoke("update_app_category", { id: dragAppId, category: cat }).then(() => loadApps()).catch(() => {});
+      setDragAppId(null);
+    }
+  };
+
   const hideWindow = async () => {
     const w = await import("@tauri-apps/api/window"); await w.getCurrentWindow().hide();
   };
@@ -308,14 +319,19 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
       )}
 
       {/* 面板：分类标签 */}
+      {/* 面板：分类标签（可拖放） */}
       {view === "panel" && !searchQuery.trim() && (
         <div className="px-4 pb-2 overflow-x-auto scrollbar-none">
           <div className="flex gap-1.5">
-            {categories.map(cat => (
-              <button key={cat} onClick={() => setActiveCategory(cat)}
-                className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-colors ${activeCategory === cat ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
-                {cat}
-              </button>
+            {categories.filter(c => c !== "全部").map(cat => (
+              <div key={cat} className="relative" onDragOver={e => e.preventDefault()} onDrop={e => onDragOver(e, cat)}>
+                <div className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-colors ${activeCategory === cat ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
+                  {cat}
+                </div>
+                {dragAppId !== null && (
+                  <div className="absolute inset-0 rounded-full ring-2 ring-primary ring-offset-1 pointer-events-none" />
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -377,9 +393,12 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
               }
               const app = item.item as AppItem;
               return (
-                <button key={app.id} onClick={() => launchApp(app)}
+                <button key={app.id}
+                  draggable
+                  onDragStart={() => setDragAppId(app.id)}
+                  onClick={() => launchApp(app)}
                   onContextMenu={e => { e.preventDefault(); setCm({x:e.clientX, y:e.clientY, app}); }}
-                  className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}>
+                  className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"} ${dragAppId === app.id ? "opacity-40" : ""}`}>
                   <div className="w-12 h-12 rounded-xl overflow-hidden bg-secondary flex items-center justify-center">
                     {iconCache[app.id]
                       ? <img src={iconCache[app.id]} alt={app.name} className="w-full h-full object-contain" />
