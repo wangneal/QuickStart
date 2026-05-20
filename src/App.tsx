@@ -157,10 +157,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
     if (showCalc && calcResult) items.push({type:"calc", item:{label:calcResult}});
     searchedFolders.forEach(f => items.push({type:"folder", item:f}));
     searchedApps.forEach(a => items.push({type:"app", item:a}));
-    fileResults.forEach(f => {
-      if (!searchQuery.trim()) return;
-      items.push({type:"file", item:f});
-    });
+    fileResults.forEach(f => { if (searchQuery.trim()) items.push({type:"file", item:f}); });
     return items;
   }, [searchedApps, searchedFolders, fileResults, showCalc, calcResult, searchQuery]);
 
@@ -394,10 +391,10 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
             <p className="text-xs mt-1">拖拽 exe 到这里添加</p>
           </div>
         ) : (
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-5 gap-2" style={{ contentVisibility: "auto" }}>
             {displayItems.map((item, idx) => {
               if (item.type === "calc") return (
-                <div key="calc" className={`col-span-5 flex items-center gap-3 p-3 rounded-xl transition-all ${idx === selectedIndex ? "bg-accent ring-2 ring-ring" : "bg-muted/50"}`}>
+                <div key="calc" className="col-span-5 flex items-center gap-3 p-3 rounded-xl transition-all" style={{contentVisibility:"visible"}}>
                   <Calculator className="w-5 h-5 text-primary" />
                   <span className="text-lg font-mono font-bold text-foreground">{item.item.label}</span>
                 </div>
@@ -406,7 +403,8 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
                 const f = item.item as {name:string;path:string;is_dir:boolean};
                 return (
                   <button key={`file-${f.path}`} onClick={() => openFile(f.path)}
-                    className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}>
+                    className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}
+                    style={{contentVisibility:"visible"}}>
                     <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
                       <Folder className="w-7 h-7 text-blue-500" />
                     </div>
@@ -420,7 +418,8 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
                 return (
                   <button key={`f-${f.id}`} onClick={() => openFolder(f.path)}
                     className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}
-                    onContextMenu={e => { e.preventDefault(); }}>
+                    onContextMenu={e => { e.preventDefault(); }}
+                    style={{contentVisibility:"visible"}}>
                     <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
                       <Folder className="w-7 h-7 text-amber-500" />
                     </div>
