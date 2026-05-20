@@ -50,9 +50,5 @@
       }
     }
   },
-  "plugins": {
-    "autostart": {
-      "enabled": true
-    }
-  }
+  "plugins": {}
 }
