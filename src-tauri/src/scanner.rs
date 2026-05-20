@@ -18,6 +18,13 @@ pub struct ScanResult {
 fn is_system_app(name: &str, path: &str) -> bool {
     let n = name.to_lowercase();
     let p = path.to_lowercase();
+    // 过滤子名称：如果"Steam"存在，"Steam Game Center"就跳过
+    for suffix in &[" game center","游戏中心"," launcher"," desktop"," app"," client"," setup"," installer"] {
+        if n.ends_with(suffix) {
+            let base = n[..n.len()-suffix.len()].trim();
+            if !base.is_empty() { return true; } // 跳过所有带这些后缀的
+        }
+    }
     let kws = ["windows","microsoft","diagnostic","performance","powershell",
         "command prompt","regedit","msconfig","task manager","resource monitor",
         "event viewer","computer management","disk management","device manager",

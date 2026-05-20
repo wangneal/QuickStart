@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
+import { open } from "@tauri-apps/plugin-shell";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import Fuse from "fuse.js";
 import { invoke } from "./lib/utils";
 import { useStore, type AppItem } from "./store";
@@ -11,6 +13,29 @@ import {
 } from "lucide-react";
 
 // ---------- 工具函数 ----------
+const AppCard = memo(function AppCard({ app, idx, selectedIndex, dragAppId, searchQuery, iconCache, onDragStart, onDragEnd, onClick, onContextMenu }: {
+  app: AppItem; idx: number; selectedIndex: number; dragAppId: number | null;
+  searchQuery: string; iconCache: Record<number,string>;
+  onDragStart: (id:number)=>void; onDragEnd: ()=>void; onClick: (a:AppItem)=>void;
+  onContextMenu: (a:AppItem)=>void;
+}) {
+  return (
+    <button draggable onDragStart={() => onDragStart(app.id)} onDragEnd={onDragEnd}
+      onClick={() => onClick(app)}
+      onContextMenu={e => { e.preventDefault(); onContextMenu(app); }}
+      className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"} ${dragAppId === app.id ? "opacity-40" : ""}`}>
+      <div className="w-12 h-12 rounded-xl overflow-hidden bg-secondary flex items-center justify-center">
+        {iconCache[app.id]
+          ? <img src={iconCache[app.id]} alt={app.name} className="w-full h-full object-contain" />
+          : <span className="text-lg font-bold text-foreground">{app.name.charAt(0)}</span>}
+      </div>
+      <span className="text-xs text-center text-muted-foreground truncate w-full leading-tight">{highlight(app.name, searchQuery)}</span>
+      <span className="text-[9px] text-muted-foreground/50 truncate w-full">{app.category}</span>
+      {app.is_pinned && <Pin className="absolute top-1 right-1 w-3 h-3 text-primary" />}
+    </button>
+  );
+});
+
 function highlight(text: string, query: string): React.ReactNode {
   if (!query) return <>{text}</>;
   const idx = text.toLowerCase().indexOf(query.toLowerCase());
@@ -181,17 +206,15 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
   const launchApp = async (app: AppItem) => {
     try {
       invoke("record_app_launch", {id: app.id}).catch(e => console.warn("record launch:", e));
-      const {open} = await import("@tauri-apps/plugin-shell");
       await open(app.path);
-      const w = await import("@tauri-apps/api/window");
-      await w.getCurrentWindow().hide();
-    } catch (e) { console.warn("launch:", e); }
+      await getCurrentWindow().hide();
+    } catch (e) { console.warn("launchApp error:", app.path, e); showToast("启动失败", "err"); }
   };
   const openFolder = async (path: string) => {
-    try { const {open} = await import("@tauri-apps/plugin-shell"); await open(path); } catch {}
+    try { await open(path); } catch (e) { console.warn("openFolder:", e); }
   };
   const openFile = async (path: string) => {
-    try { const {open} = await import("@tauri-apps/plugin-shell"); await open(path); } catch {}
+    try { await open(path); } catch (e) { console.warn("openFile:", e); }
   };
   // ---------- 拖拽分类（HTML5 原生） ----------
   const [dragAppId, setDragAppId] = useState<number | null>(null);
@@ -432,24 +455,13 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
                 );
               }
               const app = item.item as AppItem;
-              return (
-                <button key={app.id}
-                  draggable
-                  onDragStart={() => onDragStart(app.id)}
-                  onDragEnd={onDragEnd}
-                  onClick={() => launchApp(app)}
-                  onContextMenu={e => { e.preventDefault(); setCm({x:e.clientX, y:e.clientY, app}); }}
-                  className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"} ${dragAppId === app.id ? "opacity-40" : ""}`}>
-                  <div className="w-12 h-12 rounded-xl overflow-hidden bg-secondary flex items-center justify-center">
-                    {iconCache[app.id]
-                      ? <img src={iconCache[app.id]} alt={app.name} className="w-full h-full object-contain" />
-                      : <span className="text-lg font-bold text-foreground">{app.name.charAt(0)}</span>}
-                  </div>
-                  <span className="text-xs text-center text-muted-foreground truncate w-full leading-tight">{highlight(app.name, searchQuery)}</span>
-                  <span className="text-[9px] text-muted-foreground/50 truncate w-full">{app.category}</span>
-                  {app.is_pinned && <Pin className="absolute top-1 right-1 w-3 h-3 text-primary" />}
-                </button>
-              );
+              return <AppCard key={app.id} app={app}
+                idx={idx} selectedIndex={selectedIndex} dragAppId={dragAppId}
+                searchQuery={searchQuery} iconCache={iconCache}
+                onDragStart={onDragStart} onDragEnd={onDragEnd}
+                onClick={launchApp}
+                onContextMenu={(a2) => setCm({x:0, y:0, app: a2})}
+              />;
             })}
           </div>
         )}
@@ -495,7 +507,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
           <button onClick={() => togglePin(cm.app.id)} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><Pin className="w-4 h-4" />{cm.app.is_pinned ? "取消固定" : "固定到顶部"}</button>
           <button onClick={() => { setCatDialog(cm.app); setCatInput(cm.app.category); setCm(null); }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><FileType className="w-4 h-4" />修改分类</button>
           <button onClick={async () => {
-            try { const {open} = await import("@tauri-apps/plugin-shell"); const p = cm.app.path; const d = p.substring(0, p.lastIndexOf("\\")); if (d) await open(d); } catch {} setCm(null);
+            try { const d = cm.app.path.substring(0, cm.app.path.lastIndexOf("\\")); if (d) { await open(d); } else { await open(cm.app.path); } } catch (e) { console.warn("open dir:", e); } setCm(null);
           }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><Folder className="w-4 h-4" />打开所在文件夹</button>
           <div className="h-px bg-border my-1" />
           <button onClick={() => removeApp(cm.app.id)} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-destructive/10 text-destructive"><Trash2 className="w-4 h-4" />删除</button>
