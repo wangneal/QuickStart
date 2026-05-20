@@ -50,6 +50,12 @@ export default function App() {
   const [showFolderInput, setShowFolderInput] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [iconCache, setIconCache] = useState<Record<number, string>>({});
+  const [toast, setToast] = useState<{msg:string;type:"ok"|"err"} | null>(null);
+
+  const showToast = (msg:string, type:"ok"|"err"="ok") => {
+    setToast({msg,type});
+    setTimeout(() => setToast(null), 3000);
+  };
   const [folderName, setFolderName] = useState("");
   const [folderPath, setFolderPath] = useState("");
 
@@ -63,12 +69,13 @@ export default function App() {
   const doScan = useCallback(async () => {
     setScanning(true);
     try {
-      await invoke("scan_apps");
+      const r = await invoke<{apps:any[];new_count:number}>("scan_apps");
       await invoke("classify_uncategorized");
-      // 尝试 AI 分类（如果配置了 API Key）
       try { await invoke("ai_classify_apps"); } catch {}
       await loadApps();
-    } catch {} finally { setScanning(false); }
+      showToast(`扫描完成，新增 ${r.new_count} 个应用${r.new_count > 0 ? ' 🎉' : ''}`, "ok");
+    } catch { showToast("扫描失败", "err"); }
+    finally { setScanning(false); }
   }, [loadApps]);
 
   useEffect(() => { loadApps().then(() => { if (apps.length === 0) doScan(); }); loadFolders(); }, []);
@@ -255,6 +262,32 @@ export default function App() {
         {isListening && <div className="mt-1 text-xs text-center text-muted-foreground animate-pulse">正在聆听...</div>}
       </div>
 
+      {/* 常用应用（面板模式 + 无搜索时显示） */}
+      {view === "panel" && !searchQuery.trim() && (
+        (() => {
+          const topApps = [...apps].sort((a,b) => b.use_count - a.use_count).slice(0, 8).filter(a => a.use_count > 0);
+          if (topApps.length === 0) return null;
+          return (
+            <div className="px-4 pb-2">
+              <span className="text-xs font-medium text-muted-foreground mb-1.5 block">常用应用</span>
+              <div className="flex gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
+                {topApps.map(app => (
+                  <button key={app.id} onClick={() => launchApp(app)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-secondary hover:bg-accent shrink-0 transition-colors">
+                    <div className="w-5 h-5 rounded overflow-hidden bg-muted flex items-center justify-center text-[10px] font-bold shrink-0">
+                      {iconCache[app.id]
+                        ? <img src={iconCache[app.id]} alt="" className="w-full h-full object-contain" />
+                        : <span>{app.name.charAt(0)}</span>}
+                    </div>
+                    <span className="text-xs whitespace-nowrap">{app.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })()
+      )}
+
       {/* 面板：分类标签 */}
       {view === "panel" && !searchQuery.trim() && (
         <div className="px-4 pb-2 overflow-x-auto scrollbar-none">
@@ -401,6 +434,13 @@ export default function App() {
 
       {/* 设置面板 */}
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+
+      {/* Toast 通知 */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-popover border border-border shadow-lg text-sm animate-in fade-in slide-in-from-bottom-2">
+          <span className={toast.type === "err" ? "text-destructive" : "text-foreground"}>{toast.msg}</span>
+        </div>
+      )}
     </div>
   );
 }
