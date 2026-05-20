@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import { open } from "@tauri-apps/plugin-shell";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Fuse from "fuse.js";
 import { invoke } from "./lib/utils";
@@ -17,12 +18,12 @@ const AppCard = memo(function AppCard({ app, idx, selectedIndex, dragAppId, sear
   app: AppItem; idx: number; selectedIndex: number; dragAppId: number | null;
   searchQuery: string; iconCache: Record<number,string>;
   onDragStart: (id:number)=>void; onDragEnd: ()=>void; onClick: (a:AppItem)=>void;
-  onContextMenu: (a:AppItem)=>void;
+  onContextMenu: (a:AppItem, x:number, y:number)=>void;
 }) {
   return (
     <button draggable onDragStart={() => onDragStart(app.id)} onDragEnd={onDragEnd}
       onClick={() => onClick(app)}
-      onContextMenu={e => { e.preventDefault(); onContextMenu(app); }}
+      onContextMenu={e => { e.preventDefault(); onContextMenu(app, e.clientX, e.clientY); }}
       className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"} ${dragAppId === app.id ? "opacity-40" : ""}`}>
       <div className="w-12 h-12 rounded-xl overflow-hidden bg-secondary flex items-center justify-center">
         {iconCache[app.id]
@@ -46,7 +47,7 @@ function highlight(text: string, query: string): React.ReactNode {
 function safeEval(expr: string): number | null {
   const s = expr.replace(/×/g,"*").replace(/÷/g,"/").replace(/\s/g,"").replace(/[^0-9+\-*/.()%]/g,"");
   if (!s || /^[+\-*/]/.test(s)) return null;
-  try { const r = Function(`"use strict"; return (${s})`)(); if (typeof r === "number" && isFinite(r)) return r; } catch {}
+  try { const r = Function(`"use strict"; return (${s})`)(); if (typeof r === "number" && isFinite(r)) return r; } catch (e) { console.warn("safeEval:", e); }
   return null;
 }
 
@@ -61,10 +62,19 @@ class SpeechManager {
     this.r.onend = () => this.onEnd(); this.r.onerror = () => this.onEnd();
     try { this.r.start(); } catch { this.onEnd(); }
   }
-  stop() { if (this.r) { try { this.r.stop(); } catch {} this.r = null; } this.onEnd(); }
+  stop() { if (this.r) { try { this.r.stop(); } catch (e) { console.warn("speech stop:", e); } this.r = null; } this.onEnd(); }
 }
 
 interface FolderItem { id: number; name: string; path: string; sort_order: number; }
+interface FileResult { name: string; path: string; is_dir: boolean; }
+interface ScanAppsResult { apps: AppItem[]; new_count: number; }
+interface DroppedFile extends File { path?: string; }
+
+type DisplayItem =
+  | { type: "app"; item: AppItem }
+  | { type: "folder"; item: FolderItem }
+  | { type: "file"; item: FileResult }
+  | { type: "calc"; item: { label: string } };
 
 export default function App() {
   const { searchQuery, setSearchQuery, apps, setApps, isListening, setListening } = useStore();
@@ -84,7 +94,7 @@ export default function App() {
   const [maximized, setMaximized] = useState(false);
   const [iconCache, setIconCache] = useState<Record<number, string>>({});
   const [toast, setToast] = useState<{msg:string;type:"ok"|"err"} | null>(null);
-const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is_dir:boolean}>>([]);
+  const [fileResults, setFileResults] = useState<FileResult[]>([]);
 
   const showToast = (msg:string, type:"ok"|"err"="ok") => {
     setToast({msg,type});
@@ -103,12 +113,12 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
   const doScan = useCallback(async () => {
     setScanning(true);
     try {
-      const r = await invoke<{apps:any[];new_count:number}>("scan_apps");
+      const r = await invoke<ScanAppsResult>("scan_apps");
       await invoke("classify_uncategorized");
       try { await invoke("ai_classify_apps"); } catch (e) { console.warn("ai classify skipped:", e); }
       await loadApps();
       showToast(`扫描完成，新增 ${r.new_count} 个应用${r.new_count > 0 ? ' 🎉' : ''}`, "ok");
-    } catch { showToast("扫描失败", "err"); }
+    } catch (e) { console.warn("scan_apps:", e); showToast("扫描失败", "err"); }
     finally { setScanning(false); }
   }, [loadApps]);
 
@@ -139,7 +149,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
     const q = searchQuery.trim();
     if (q.length < 2) { setFileResults([]); return; }
     const timer = setTimeout(async () => {
-      try { const r = await invoke<any[]>("search_files", { query: q }); setFileResults(r); } catch {}
+      try { const r = await invoke<FileResult[]>("search_files", { query: q }); setFileResults(r); } catch (e) { console.warn("search_files:", e); setFileResults([]); }
     }, 200);
     return () => clearTimeout(timer);
   }, [searchQuery]);
@@ -181,7 +191,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
   }, [searchQuery, isCalcQuery]);
 
   const displayItems = useMemo(() => {
-    const items: Array<{type:"app"|"folder"|"file"|"calc";item:any}> = [];
+    const items: DisplayItem[] = [];
     if (showCalc && calcResult) items.push({type:"calc", item:{label:calcResult}});
     searchedFolders.forEach(f => items.push({type:"folder", item:f}));
     searchedApps.forEach(a => items.push({type:"app", item:a}));
@@ -276,23 +286,23 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
     toLoad.forEach(a => loadIcon(a.id));
   }, [filteredByCategory]);
 
-  const removeApp = async (id: number) => { try { await invoke("remove_app", {id}); await loadApps(); } catch {} setCm(null); };
-  const togglePin = async (id: number) => { try { await invoke("toggle_pin_app", {id}); await loadApps(); } catch {} setCm(null); };
-  const updateCategory = async (id: number, category: string) => { try { await invoke("update_app_category", {id, category}); await loadApps(); } catch {} setCm(null); };
+  const removeApp = async (id: number) => { try { await invoke("remove_app", {id}); await loadApps(); } catch (e) { console.warn("remove_app:", e); } setCm(null); };
+  const togglePin = async (id: number) => { try { await invoke("toggle_pin_app", {id}); await loadApps(); } catch (e) { console.warn("toggle_pin_app:", e); } setCm(null); };
+  const updateCategory = async (id: number, category: string) => { try { await invoke("update_app_category", {id, category}); await loadApps(); } catch (e) { console.warn("update_app_category:", e); } setCm(null); };
 
   const addFolder = async () => {
     if (!folderName || !folderPath) return;
-    try { await invoke("add_folder", {name: folderName, path: folderPath}); await loadFolders(); setShowFolderInput(false); setFolderName(""); setFolderPath(""); } catch {}
+    try { await invoke("add_folder", {name: folderName, path: folderPath}); await loadFolders(); setShowFolderInput(false); setFolderName(""); setFolderPath(""); } catch (e) { console.warn("add_folder:", e); }
   };
-  const removeFolder = async (id: number) => { try { await invoke("remove_folder", {id}); await loadFolders(); } catch {} };
+  const removeFolder = async (id: number) => { try { await invoke("remove_folder", {id}); await loadFolders(); } catch (e) { console.warn("remove_folder:", e); } };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    for (const file of Array.from(e.dataTransfer.files)) {
+    for (const file of Array.from(e.dataTransfer.files) as DroppedFile[]) {
       if (file.name.endsWith(".exe") || file.name.endsWith(".lnk")) {
         const name = file.name.replace(/\.(exe|lnk)$/i,"");
-        const path = (file as any).path || file.name;
-        try { await invoke("add_app", {name, path}); } catch {}
+        const path = file.path || file.name;
+        try { await invoke("add_app", {name, path}); } catch (e) { console.warn("add_app:", e); }
       }
     }
     await loadApps();
@@ -460,7 +470,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
                 searchQuery={searchQuery} iconCache={iconCache}
                 onDragStart={onDragStart} onDragEnd={onDragEnd}
                 onClick={launchApp}
-                onContextMenu={(a2) => setCm({x:0, y:0, app: a2})}
+                onContextMenu={(a2, cx, cy) => setCm({x: cx, y: cy, app: a2})}
               />;
             })}
           </div>
@@ -506,9 +516,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
           <button onClick={() => { launchApp(cm.app); setCm(null); }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><ExternalLink className="w-4 h-4" />启动</button>
           <button onClick={() => togglePin(cm.app.id)} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><Pin className="w-4 h-4" />{cm.app.is_pinned ? "取消固定" : "固定到顶部"}</button>
           <button onClick={() => { setCatDialog(cm.app); setCatInput(cm.app.category); setCm(null); }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><FileType className="w-4 h-4" />修改分类</button>
-          <button onClick={async () => {
-            try { const d = cm.app.path.substring(0, cm.app.path.lastIndexOf("\\")); if (d) { await open(d); } else { await open(cm.app.path); } } catch (e) { console.warn("open dir:", e); } setCm(null);
-          }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><Folder className="w-4 h-4" />打开所在文件夹</button>
+          <button onClick={async () => { try { await invoke("reveal_in_explorer", { path: cm.app.path }); } catch (e) { console.warn("reveal:", e); } setCm(null); }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><Folder className="w-4 h-4" />打开所在文件夹</button>
           <div className="h-px bg-border my-1" />
           <button onClick={() => removeApp(cm.app.id)} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-destructive/10 text-destructive"><Trash2 className="w-4 h-4" />删除</button>
         </div>
