@@ -94,9 +94,10 @@ fn read_lnks(dir: &Path, apps: &mut Vec<ScannedApp>) {
     }
 }
 
-/// 提取图标（按需调用）
+/// 提取图标（单个，首次提取调 PowerShell，后续直接读缓存）
 pub fn extract_and_cache_icon(app_path: &str, ah: &tauri::AppHandle) -> Option<String> {
     use tauri::Manager;
+    use std::path::Path;
     let d = ah.path().app_data_dir().unwrap_or_default();
     let c = d.join("icons"); std::fs::create_dir_all(&c).ok()?;
     let stem = Path::new(app_path).file_stem()?.to_string_lossy();
