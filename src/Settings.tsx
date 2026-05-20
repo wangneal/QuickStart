@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "./lib/utils";
-import { X, Sun, Moon, Monitor, Keyboard, Power, Cpu } from "lucide-react";
+import { X, Sun, Moon, Monitor, Keyboard, Power, Cpu, LayoutGrid } from "lucide-react";
 
 interface Props {
   onClose: () => void;
@@ -12,6 +12,7 @@ export default function Settings({ onClose }: Props) {
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("gpt-4o-mini");
   const [autoStart, setAutoStart] = useState(true);
+  const [autoClassify, setAutoClassify] = useState(true);
   const [theme, setTheme] = useState<"system" | "light" | "dark">("system");
   const [saved, setSaved] = useState(false);
 
@@ -19,14 +20,20 @@ export default function Settings({ onClose }: Props) {
   useEffect(() => {
     const load = async () => {
       try {
-        const db_path = await invoke<string>("get_db_path");
-        // 这里后续可以用统一的 settings API
+        const ac = await invoke<string>("get_setting", { key: "auto_classify" });
+        if (ac) setAutoClassify(ac === "true");
+        const th = await invoke<string>("get_setting", { key: "theme" });
+        if (th) setTheme(th as any);
       } catch {}
     };
     load();
   }, []);
 
   const handleSave = async () => {
+    try {
+      await invoke("set_setting", { key: "auto_classify", value: autoClassify ? "true" : "false" });
+      await invoke("set_setting", { key: "theme", value: theme });
+    } catch {}
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -82,6 +89,21 @@ export default function Settings({ onClose }: Props) {
             <label className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary cursor-pointer">
               <span className="text-sm">开机自启</span>
               <input type="checkbox" checked={autoStart} onChange={e => setAutoStart(e.target.checked)}
+                className="w-4 h-4 rounded border-border accent-primary" />
+            </label>
+          </section>
+
+          {/* 分类 */}
+          <section>
+            <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+              <LayoutGrid className="w-4 h-4" /> 应用分类
+            </h3>
+            <label className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary cursor-pointer">
+              <div>
+                <span className="text-sm">自动分类</span>
+                <p className="text-xs text-muted-foreground mt-0.5">扫描后自动按关键词归类应用</p>
+              </div>
+              <input type="checkbox" checked={autoClassify} onChange={e => setAutoClassify(e.target.checked)}
                 className="w-4 h-4 rounded border-border accent-primary" />
             </label>
           </section>

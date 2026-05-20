@@ -263,3 +263,114 @@ pub fn ai_get_apps(app_handle: AppHandle) -> Result<Vec<crate::commands::AppItem
 
     Ok(apps)
 }
+
+/// LLM 自动分类未归类应用
+#[tauri::command]
+pub async fn ai_classify_apps(
+    _app_handle: AppHandle,
+    db_path: tauri::State<'_, crate::commands::DbPath>,
+) -> Result<usize, String> {
+    // 先读 DB，收集数据后关闭连接（避免 Send 问题）
+    let (names, provider, api_key, model, base_url) = {
+        let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+
+        let mut stmt = conn.prepare("SELECT name FROM apps WHERE category = '未分类' OR category = '' LIMIT 50")
+            .map_err(|e| e.to_string())?;
+        let names: Vec<String> = stmt.query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        let provider: String = conn.query_row("SELECT value FROM settings WHERE key = 'ai_provider'", [], |r| r.get(0))
+            .unwrap_or_default();
+        let api_key: String = conn.query_row("SELECT value FROM settings WHERE key = 'ai_api_key'", [], |r| r.get(0))
+            .unwrap_or_default();
+        let model: String = conn.query_row("SELECT value FROM settings WHERE key = 'ai_model'", [], |r| r.get(0))
+            .unwrap_or_else(|_| "gpt-4o-mini".into());
+        let base_url: String = conn.query_row("SELECT value FROM settings WHERE key = 'ai_base_url'", [], |r| r.get(0))
+            .unwrap_or_default();
+
+        (names, provider, api_key, model, base_url)
+    }; // conn 在这里 drop
+
+    if names.is_empty() { return Ok(0); }
+    if provider.is_empty() || api_key.is_empty() {
+        return Err("请在设置中配置 AI 提供商和 API Key".into());
+    }
+
+    let names_list = names.join("\n");
+    let system_prompt = "你是一个 Windows 应用分类专家。根据应用名称将其归类，只返回 JSON 数组，格式：[{\"name\":\"应用名\",\"category\":\"类别\"}]，不要任何其他文字。类别从以下选择：开发、办公、浏览器、娱乐、设计、通讯、系统工具、教育、其他。";
+    let user_prompt = format!("分类以下 Windows 应用：\n{}", names_list);
+
+    let messages = vec![
+        serde_json::json!({"role": "system", "content": system_prompt}),
+        serde_json::json!({"role": "user", "content": user_prompt}),
+    ];
+
+    let url = match provider.as_str() {
+        "openai" => "https://api.openai.com/v1/chat/completions".to_string(),
+        "custom" => format!("{}/chat/completions", base_url.trim_end_matches('/')),
+        _ => return Err(format!("不支持的提供商: {}", provider)),
+    };
+
+    let body = serde_json::json!({
+        "model": model, "messages": messages, "temperature": 0.1, "max_tokens": 2000
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client.post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send().await.map_err(|e| format!("API 请求失败: {}", e))?;
+
+    let result: serde_json::Value = resp.json().await.map_err(|e| format!("解析响应失败: {}", e))?;
+    let content = result["choices"][0]["message"]["content"].as_str().ok_or("AI 返回为空")?;
+
+    let json_str = content.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+    let items: Vec<serde_json::Value> = serde_json::from_str(json_str)
+        .map_err(|e| format!("解析分类结果失败: {}. 原始响应: {}", e, content))?;
+
+    // 再开 DB 连接写结果
+    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+    let mut count = 0;
+    for item in &items {
+        if let (Some(name), Some(cat)) = (item["name"].as_str(), item["category"].as_str()) {
+            if conn.execute(
+                "UPDATE apps SET category = ?1 WHERE LOWER(name) = LOWER(?2) AND (category = '未分类' OR category = '')",
+                rusqlite::params![cat, name],
+            ).map_err(|e| e.to_string())? > 0 { count += 1; }
+        }
+    }
+    Ok(count)
+}
+
+/// 安全整理文件夹：只移动文件到目标目录，不删除不重命名
+#[tauri::command]
+pub fn organize_folder(source: String, target_dir: String) -> Result<String, String> {
+    let src = Path::new(&source);
+    let dst_dir = Path::new(&target_dir);
+
+    if !src.exists() { return Err("源文件不存在".into()); }
+    if !dst_dir.is_dir() { return Err("目标目录不存在".into()); }
+
+    let file_name = src.file_name().ok_or("无效文件名")?;
+    let dest = dst_dir.join(file_name);
+
+    // 如果目标已存在，加数字后缀
+    let final_dest = if dest.exists() {
+        let stem = src.file_stem().unwrap_or_default().to_string_lossy();
+        let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let mut i = 1;
+        loop {
+            let candidate = dst_dir.join(format!("{}_{}{}", stem, i, ext));
+            if !candidate.exists() { break candidate; }
+            i += 1;
+        }
+    } else {
+        dest
+    };
+
+    std::fs::rename(&source, &final_dest).map_err(|e| format!("移动失败: {}", e))?;
+    Ok(format!("已移动到: {}", final_dest.display()))
+}

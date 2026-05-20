@@ -302,12 +302,40 @@ pub fn get_app_icon(
     Err("无法提取图标".into())
 }
 
-/// 自动分类未归类应用
+/// 自动分类未归类应用（检查设置开关）
 #[tauri::command]
 pub fn classify_uncategorized(db_path: State<'_, DbPath>) -> Result<usize, String> {
     let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+
+    // 检查是否启用自动分类
+    let enabled: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'auto_classify'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "true".into());
+    if enabled != "true" {
+        return Ok(0);
+    }
+
     let classifier = Classifier::new();
     classifier.classify_uncategorized(&conn).map_err(|e| e.to_string())
+}
+
+/// 获取设置
+#[tauri::command]
+pub fn get_setting(db_path: State<'_, DbPath>, key: String) -> Result<String, String> {
+    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+    conn.query_row("SELECT value FROM settings WHERE key = ?1", [&key], |row| row.get(0))
+        .map_err(|e| e.to_string())
+}
+
+/// 更新设置
+#[tauri::command]
+pub fn set_setting(db_path: State<'_, DbPath>, key: String, value: String) -> Result<(), String> {
+    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
+        rusqlite::params![key, value],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 获取数据库路径（用于前端调试）

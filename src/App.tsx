@@ -65,6 +65,8 @@ export default function App() {
     try {
       await invoke("scan_apps");
       await invoke("classify_uncategorized");
+      // 尝试 AI 分类（如果配置了 API Key）
+      try { await invoke("ai_classify_apps"); } catch {}
       await loadApps();
     } catch {} finally { setScanning(false); }
   }, [loadApps]);

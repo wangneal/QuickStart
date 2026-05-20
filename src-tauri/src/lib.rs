@@ -84,10 +84,14 @@ pub fn run() {
             commands::get_db_path,
             commands::get_app_icon,
             commands::classify_uncategorized,
+            commands::get_setting,
+            commands::set_setting,
             commands::refresh_app_icon,
             ai::ai_chat_stream,
             ai::list_directory,
             ai::ai_get_apps,
+            ai::ai_classify_apps,
+            ai::organize_folder,
         ])
         .run(tauri::generate_context!())
         .expect("启动 QuickStart 时出错");

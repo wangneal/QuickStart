@@ -58,6 +58,7 @@ pub fn init_database(db_path: &PathBuf) -> Result<()> {
             ('hotkey', 'Alt+Space'),
             ('auto_start', 'true'),
             ('theme', 'system'),
+            ('auto_classify', 'true'),
             ('ai_provider', ''),
             ('ai_api_key', ''),
             ('ai_base_url', ''),
