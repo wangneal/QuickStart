@@ -1,0 +1,43 @@
+
+
+# Planning docs
+.planning/
+
+# Dependencies
+node_modules/
+
+# Rust build artifacts
+src-tauri/target/
+
+# Build output
+dist/
+
+# OS files
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# IDE & editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+.ensime_cache
+.eclipse
+*.iml
+
+# Temp files
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+.DS_Store?
+
+# Environment
+.env
+.env.local
+.env.*.local
+
