@@ -180,12 +180,12 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
 
   const launchApp = async (app: AppItem) => {
     try {
-      invoke("record_app_launch", {id: app.id}).catch(()=>{});
+      invoke("record_app_launch", {id: app.id}).catch(e => console.warn("record launch:", e));
       const {open} = await import("@tauri-apps/plugin-shell");
       await open(app.path);
       const w = await import("@tauri-apps/api/window");
       await w.getCurrentWindow().hide();
-    } catch {}
+    } catch (e) { console.warn("launch:", e); }
   };
   const openFolder = async (path: string) => {
     try { const {open} = await import("@tauri-apps/plugin-shell"); await open(path); } catch {}
@@ -210,7 +210,7 @@ const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is
     e.preventDefault();
     setDragOverCat(null);
     if (dragAppId !== null && cat && cat !== "全部") {
-      invoke("update_app_category", { id: dragAppId, category: cat }).then(() => loadApps()).catch(() => {});
+      invoke("update_app_category", { id: dragAppId, category: cat }).then(() => loadApps()).catch(e => console.warn("update category:", e));
       setDragAppId(null);
     }
   };
