@@ -34,19 +34,19 @@ pub fn scan_and_save(conn: &Connection, _app_handle: &tauri::AppHandle) -> Resul
         all_apps.extend(apps);
     }
 
-    // 去重入库
+    // 去重入库（路径去重）
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut new_count = 0;
 
     for app in &all_apps {
-        let key = app.name.to_lowercase();
+        let key = app.path.to_lowercase();
         if seen.contains(&key) { continue; }
         seen.insert(key);
 
         let exists: bool = conn
             .query_row(
-                "SELECT COUNT(*) > 0 FROM apps WHERE LOWER(name) = ?1",
-                [&app.name.to_lowercase()],
+                "SELECT COUNT(*) > 0 FROM apps WHERE path = ?1",
+                [&app.path],
                 |row| row.get(0),
             )
             .unwrap_or(false);

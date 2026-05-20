@@ -5,7 +5,7 @@ import { useStore, type AppItem } from "./store";
 import AIChat from "./AIChat";
 import SettingsPanel from "./Settings";
 import {
-  Search, Mic, Settings, X, Folder, Trash2, Pin, ScanLine,
+  Search, Mic, Settings, X, Minus, Folder, Trash2, Pin, ScanLine,
   ExternalLink, Calculator, LayoutGrid, List, Plus, FolderPlus, FileType, Bot,
 } from "lucide-react";
 
@@ -142,6 +142,9 @@ export default function App() {
   const hideWindow = async () => {
     const w = await import("@tauri-apps/api/window"); await w.getCurrentWindow().hide();
   };
+  const minimizeWindow = async () => {
+    const w = await import("@tauri-apps/api/window"); await w.getCurrentWindow().minimize();
+  };
 
   // 语音
   const toggleListening = () => {
@@ -198,6 +201,9 @@ export default function App() {
           </button>
           <button onClick={doScan} disabled={scanning} className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50" title="扫描并分类">
             <ScanLine className={`w-4 h-4 ${scanning ? "animate-spin" : ""}`} />
+          </button>
+          <button onClick={minimizeWindow} className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="最小化">
+            <Minus className="w-4 h-4" />
           </button>
           <button onClick={() => setShowSettings(true)} className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="设置">
             <Settings className="w-4 h-4" />
