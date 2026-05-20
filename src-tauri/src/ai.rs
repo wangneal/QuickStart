@@ -299,7 +299,7 @@ pub async fn ai_classify_apps(
     }
 
     let names_list = names.join("\n");
-    let system_prompt = "你是一个 Windows 应用分类专家。根据应用名归类，只返回 JSON 数组 [{\"name\":\"应用名\",\"category\":\"类别\"}]，不要其他文字。\n类别说明：\n- 开发: IDE(VSCode/IntelliJ/PyCharm), 编辑器(Vim/Sublime), 终端(CMD/PowerShell), Git, Docker, Node, 数据库, Postman\n- 办公: Office/Word/Excel/PPT/WPS, PDF, Notion, 会议(Zoom/腾讯会议), 思维导图, 笔记\n- 浏览器: Chrome, Edge, Firefox, Brave, Opera, 360浏览器\n- 娱乐: Steam/游戏, 音乐(网易云/Spotify), 视频(爱奇艺/哔哩哔哩), 直播\n- 设计: PS, Figma, Blender, AutoCAD, 3ds Max, 剪辑(Premiere/剪映)\n- 通讯: 微信, QQ, 钉钉, 飞书, Telegram, Discord, Slack, Zoom\n- 系统工具: 压缩(7z/WinRAR), 截图, 清理, 驱动, 磁盘工具, Everything\n- 教育: 词典, 翻译, 编程学习, 数学\n- 其他: 不好分类的放这里";
+    let system_prompt = "你是一个 Windows 应用分类专家。根据应用名归类，只返回 JSON 数组 [{\"name\":\"应用名\",\"category\":\"类别\"}]，不要其他文字。\n类别说明：\n- 开发: IDE(VSCode/IntelliJ/PyCharm), 编辑器(Vim/Sublime), 终端(CMD/PowerShell), Git, Docker, Node, 数据库, Postman\n- 办公: Office/Word/Excel/PPT/WPS, PDF, Notion, 会议(Zoom/腾讯会议), 思维导图, 笔记\n- 浏览器: Chrome, Edge, Firefox, Brave, Opera, 360浏览器\n- 娱乐: Steam/游戏, 音乐(网易云/Spotify), 视频(爱奇艺/哔哩哔哩), 直播\n- 设计: PS, Figma, Blender, AutoCAD, 3ds Max, 剪辑(Premiere/剪映)\n- 通讯: 微信, QQ, 钉钉, 飞书, Telegram, Discord, Slack, Zoom\n- 系统工具: 压缩(7z/WinRAR), 截图, 清理, 驱动, 磁盘工具, Everything\n- 教育: 词典, 翻译, 编程学习, 数学\n- 其他: 不好分类的放这里\n注意：遇到不熟悉的应用名，根据名称关键词和常识推断类别，不要留空或跳过";
     let user_prompt = format!("分类以下 Windows 应用：\n{}", names_list);
 
     let messages = vec![

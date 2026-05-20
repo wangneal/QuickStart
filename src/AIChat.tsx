@@ -82,7 +82,7 @@ export default function AIChat({ onClose }: Props) {
         "- .mp3 .wav .flac .aac .ogg .wma .m4a → 桌面/音频",
         "- .js .ts .py .rs .go .java .cpp .c .cs .rb .php .vue .svelte .css .scss → 桌面/代码",
         "- .ttf .otf .woff .woff2 → 桌面/字体",
-        "- 其他 → 桌面/其他",
+        "- 未列出的类型 → 根据文件名和常识判断最合适的分类，不确定就放「其他」",
         "",
         "【操作流程】",
         "1. 先用 list_directory 列出目录内容",
