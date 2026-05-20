@@ -56,12 +56,15 @@ pub fn run() {
             // 设置系统托盘
             tray::create_tray(app)?;
 
-            // 如果通过 autostart 启动，窗口默认隐藏
+            // 自动启动时隐藏窗口，否则显示
             let args: Vec<String> = std::env::args().collect();
             if args.contains(&"--autostart".to_string()) {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
                 }
+            } else if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
             }
 
             Ok(())
