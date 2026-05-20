@@ -87,6 +87,7 @@ pub fn run() {
             commands::get_setting,
             commands::set_setting,
             commands::refresh_app_icon,
+            commands::search_files,
             ai::ai_chat_stream,
             ai::list_directory,
             ai::ai_get_apps,

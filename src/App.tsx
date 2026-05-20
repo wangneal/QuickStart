@@ -51,6 +51,7 @@ export default function App() {
   const [maximized, setMaximized] = useState(false);
   const [iconCache, setIconCache] = useState<Record<number, string>>({});
   const [toast, setToast] = useState<{msg:string;type:"ok"|"err"} | null>(null);
+const [fileResults, setFileResults] = useState<Array<{name:string;path:string;is_dir:boolean}>>([]);
 
   const showToast = (msg:string, type:"ok"|"err"="ok") => {
     setToast({msg,type});
@@ -80,6 +81,16 @@ export default function App() {
 
   useEffect(() => { loadApps().then(() => { if (apps.length === 0) doScan(); }); loadFolders(); }, []);
   useEffect(() => { inputRef.current?.focus(); }, [view]);
+
+  // 文件搜索（输入至少 2 个字符后触发）
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) { setFileResults([]); return; }
+    const timer = setTimeout(async () => {
+      try { const r = await invoke<any[]>("search_files", { query: q }); setFileResults(r); } catch {}
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
   useEffect(() => { const h = () => setCm(null); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, []);
 
   // 分类
@@ -118,12 +129,16 @@ export default function App() {
   }, [searchQuery, isCalcQuery]);
 
   const displayItems = useMemo(() => {
-    const items: Array<{type:"app"|"folder"|"calc";item:any}> = [];
+    const items: Array<{type:"app"|"folder"|"file"|"calc";item:any}> = [];
     if (showCalc && calcResult) items.push({type:"calc", item:{label:calcResult}});
     searchedFolders.forEach(f => items.push({type:"folder", item:f}));
     searchedApps.forEach(a => items.push({type:"app", item:a}));
+    fileResults.forEach(f => {
+      if (!searchQuery.trim()) return;
+      items.push({type:"file", item:f});
+    });
     return items;
-  }, [searchedApps, searchedFolders, showCalc, calcResult]);
+  }, [searchedApps, searchedFolders, fileResults, showCalc, calcResult, searchQuery]);
 
   // 按键
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -133,6 +148,7 @@ export default function App() {
       const item = displayItems[selectedIndex];
       if (item?.type === "app") launchApp(item.item);
       else if (item?.type === "folder") openFolder(item.item.path);
+      else if (item?.type === "file") openFile(item.item.path);
     } else if (e.key === "Escape") {
       if (searchQuery) setSearchQuery(""); else hideWindow();
     }
@@ -148,6 +164,9 @@ export default function App() {
     } catch {}
   };
   const openFolder = async (path: string) => {
+    try { const {open} = await import("@tauri-apps/plugin-shell"); await open(path); } catch {}
+  };
+  const openFile = async (path: string) => {
     try { const {open} = await import("@tauri-apps/plugin-shell"); await open(path); } catch {}
   };
   const hideWindow = async () => {
@@ -330,6 +349,19 @@ export default function App() {
                   <span className="text-lg font-mono font-bold text-foreground">{item.item.label}</span>
                 </div>
               );
+              if (item.type === "file") {
+                const f = item.item as {name:string;path:string;is_dir:boolean};
+                return (
+                  <button key={`file-${f.path}`} onClick={() => openFile(f.path)}
+                    className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}>
+                    <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
+                      <Folder className="w-7 h-7 text-blue-500" />
+                    </div>
+                    <span className="text-xs text-center text-muted-foreground truncate w-full">{f.name}</span>
+                    <span className="text-[9px] text-muted-foreground/50 truncate w-full">{f.is_dir ? "文件夹" : "文件"}</span>
+                  </button>
+                );
+              }
               if (item.type === "folder") {
                 const f = item.item as FolderItem;
                 return (

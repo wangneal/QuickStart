@@ -371,3 +371,48 @@ pub fn refresh_app_icon(
 
     Ok(icon_path)
 }
+
+/// 搜索文件（桌面/下载/文档目录）
+#[derive(Serialize)]
+pub struct FileResult {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+#[tauri::command]
+pub fn search_files(query: String) -> Result<Vec<FileResult>, String> {
+    let user = std::env::var("USERPROFILE").unwrap_or_else(|_| r"C:\Users\Default".into());
+    let dirs = [
+        PathBuf::from(&user).join("Desktop"),
+        PathBuf::from(&user).join("Downloads"),
+        PathBuf::from(&user).join("Documents"),
+    ];
+
+    let q = query.to_lowercase();
+    let mut results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for dir in &dirs {
+        if !dir.is_dir() { continue; }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') || name.eq_ignore_ascii_case("desktop.ini") { continue; }
+                let lower = name.to_lowercase();
+                if lower.contains(&q) && seen.insert(lower) {
+                    results.push(FileResult {
+                        name,
+                        path: path.to_string_lossy().to_string(),
+                        is_dir: path.is_dir(),
+                    });
+                }
+                if results.len() >= 20 { break; }
+            }
+        }
+        if results.len() >= 20 { break; }
+    }
+
+    Ok(results)
+}
