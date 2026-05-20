@@ -1,0 +1,70 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug Rust 后端 (Tauri)",
+      "preLaunchTask": "build:rust:debug",
+      "cargo": {
+        "args": [
+          "build",
+          "--manifest-path=src-tauri/Cargo.toml",
+          "--no-default-features"
+        ]
+      },
+      "program": "${workspaceFolder}/src-tauri/target/debug/quickstart.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"],
+      "env": {
+        "RUST_BACKTRACE": "1"
+      },
+      "presentation": {
+        "group": "tauri",
+        "order": 1
+      }
+    },
+    {
+      "type": "msedge",
+      "request": "launch",
+      "name": "Debug 前端 (Vite + Edge)",
+      "url": "http://localhost:1420",
+      "webRoot": "${workspaceFolder}/src",
+      "sourceMapPathOverrides": {
+        "webpack:///src/*": "${webRoot}/*"
+      },
+      "preLaunchTask": "start:vite:dev",
+      "presentation": {
+        "group": "tauri",
+        "order": 2
+      }
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Debug 前端 (Vite + Chrome)",
+      "url": "http://localhost:1420",
+      "webRoot": "${workspaceFolder}/src",
+      "sourceMapPathOverrides": {
+        "webpack:///src/*": "${webRoot}/*"
+      },
+      "preLaunchTask": "start:vite:dev",
+      "presentation": {
+        "group": "tauri",
+        "order": 3
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug QuickStart 全栈",
+      "configurations": ["Debug Rust 后端 (Tauri)", "Debug 前端 (Vite + Edge)"],
+      "preLaunchTask": "start:vite:dev",
+      "presentation": {
+        "group": "tauri",
+        "order": 0
+      }
+    }
+  ]
+}

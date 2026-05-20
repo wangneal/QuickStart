@@ -1,5 +1,4 @@
 
-
 # Planning docs
 .planning/
 
@@ -17,9 +16,8 @@ Thumbs.db
 .DS_Store
 Desktop.ini
 
-# IDE & editor
+# IDE & editor (project configs like .vscode/launch.json are tracked)
 .idea/
-.vscode/
 *.swp
 *.swo
 *.swn
