@@ -69,6 +69,7 @@ pub fn init_database(db_path: &PathBuf) -> Result<()> {
 }
 
 /// 获取设置值
+#[allow(dead_code)]
 pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
     let mut rows = stmt.query([key])?;
@@ -79,6 +80,7 @@ pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
 }
 
 /// 设置值
+#[allow(dead_code)]
 pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
