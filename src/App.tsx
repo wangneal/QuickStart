@@ -48,6 +48,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAIChat, setShowAIChat] = useState(false);
   const [showFolderInput, setShowFolderInput] = useState(false);
+  const [iconCache, setIconCache] = useState<Record<number, string>>({});
   const [folderName, setFolderName] = useState("");
   const [folderPath, setFolderPath] = useState("");
 
@@ -154,6 +155,20 @@ export default function App() {
   };
 
   // 应用操作
+  const loadIcon = async (appId: number) => {
+    if (iconCache[appId]) return;
+    try {
+      const dataUrl = await invoke<string>("get_app_icon", { appId });
+      setIconCache(prev => ({ ...prev, [appId]: dataUrl }));
+    } catch {}
+  };
+
+  useEffect(() => {
+    // 懒加载前 20 个应用的图标
+    const toLoad = filteredByCategory.slice(0, 20).filter(a => !iconCache[a.id]);
+    toLoad.forEach(a => loadIcon(a.id));
+  }, [filteredByCategory]);
+
   const removeApp = async (id: number) => { try { await invoke("remove_app", {id}); await loadApps(); } catch {} setCm(null); };
   const togglePin = async (id: number) => { try { await invoke("toggle_pin_app", {id}); await loadApps(); } catch {} setCm(null); };
   const updateCategory = async (id: number, category: string) => { try { await invoke("update_app_category", {id, category}); await loadApps(); } catch {} setCm(null); };
@@ -288,8 +303,8 @@ export default function App() {
                   onContextMenu={e => { e.preventDefault(); setCm({x:e.clientX, y:e.clientY, app}); }}
                   className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}>
                   <div className="w-12 h-12 rounded-xl overflow-hidden bg-secondary flex items-center justify-center">
-                    {app.icon_path
-                      ? <img src={`https://asset.localhost/${encodeURIComponent(app.icon_path)}`} alt={app.name} className="w-full h-full object-contain" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    {iconCache[app.id]
+                      ? <img src={iconCache[app.id]} alt={app.name} className="w-full h-full object-contain" />
                       : <span className="text-lg font-bold text-foreground">{app.name.charAt(0)}</span>}
                   </div>
                   <span className="text-xs text-center text-muted-foreground truncate w-full leading-tight">{app.name}</span>

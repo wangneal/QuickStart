@@ -256,17 +256,50 @@ pub fn remove_folder(db_path: State<'_, DbPath>, id: i64) -> Result<(), String> 
     Ok(())
 }
 
-/// 获取应用图标（base64 data URL）
+/// 获取应用图标（按需提取+缓存，返回 base64 data URL）
 #[tauri::command]
-pub fn get_app_icon(icon_path: String) -> Result<String, String> {
-    let data = fs::read(&icon_path).map_err(|e| format!("读取图标失败: {}", e))?;
-    use base64::Engine;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-    if icon_path.to_lowercase().ends_with(".png") {
-        Ok(format!("data:image/png;base64,{}", b64))
-    } else {
-        Ok(format!("data:image/x-icon;base64,{}", b64))
+pub fn get_app_icon(
+    db_path: State<'_, DbPath>,
+    app_id: i64,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+
+    // 查出应用路径和已有 icon_path
+    let (app_path, existing_icon): (String, Option<String>) = conn
+        .query_row(
+            "SELECT path, icon_path FROM apps WHERE id = ?1",
+            [app_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // 已有缓存且文件存在，直接读取
+    if let Some(ref icon) = existing_icon {
+        if std::path::Path::new(icon).exists() {
+            let data = fs::read(icon).map_err(|e| format!("读图标失败: {}", e))?;
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            return Ok(format!("data:image/png;base64,{}", b64));
+        }
     }
+
+    // 提取图标
+    if let Some(cached) = scanner::extract_and_cache_icon(&app_path, &app_handle) {
+        // 更新数据库
+        let _ = conn.execute(
+            "UPDATE apps SET icon_path = ?1 WHERE id = ?2",
+            rusqlite::params![cached, app_id],
+        );
+        // 读取并返回
+        if let Ok(data) = fs::read(&cached) {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            return Ok(format!("data:image/png;base64,{}", b64));
+        }
+    }
+
+    Err("无法提取图标".into())
 }
 
 /// 自动分类未归类应用
