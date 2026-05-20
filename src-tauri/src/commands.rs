@@ -433,3 +433,26 @@ pub async fn check_update() -> Result<String, String> {
     if tag.is_empty() { return Err("获取版本失败".into()); }
     Ok(tag)
 }
+
+/// 启动应用（cmd /c start，支持 lnk/exe/任意关联文件）
+#[tauri::command]
+pub fn launch_app(path: String) -> Result<(), String> {
+    std::process::Command::new("cmd")
+        .args(["/c", "start", "", &path])
+        .spawn()
+        .map_err(|e| format!("启动失败: {}", e))?;
+    Ok(())
+}
+
+/// 在资源管理器中定位文件（explorer /select,）
+#[tauri::command]
+pub fn reveal_in_explorer(path: String) -> Result<(), String> {
+    let abs = std::path::Path::new(&path);
+    if !abs.exists() { return Err("文件不存在".into()); }
+    std::process::Command::new("explorer")
+        .arg("/select,")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("打开失败: {}", e))?;
+    Ok(())
+}

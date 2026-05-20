@@ -90,6 +90,8 @@ pub fn run() {
             commands::refresh_app_icon,
             commands::search_files,
             commands::check_update,
+            commands::launch_app,
+            commands::reveal_in_explorer,
             ai::ai_chat_stream,
             ai::list_directory,
             ai::ai_get_apps,

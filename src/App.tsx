@@ -216,9 +216,9 @@ export default function App() {
   const launchApp = async (app: AppItem) => {
     try {
       invoke("record_app_launch", {id: app.id}).catch(e => console.warn("record launch:", e));
-      await open(app.path);
+      await invoke("launch_app", { path: app.path });
       await getCurrentWindow().hide();
-    } catch (e) { console.warn("launchApp error:", app.path, e); showToast("启动失败", "err"); }
+    } catch (e) { console.warn("launchApp error:", app.path, e); showToast("启动失败: " + e, "err"); }
   };
   const openFolder = async (path: string) => {
     try { await open(path); } catch (e) { console.warn("openFolder:", e); }
