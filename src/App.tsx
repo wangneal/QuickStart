@@ -5,7 +5,7 @@ import { useStore, type AppItem } from "./store";
 import AIChat from "./AIChat";
 import SettingsPanel from "./Settings";
 import {
-  Search, Mic, Settings, X, Minus, Folder, Trash2, Pin, ScanLine,
+  Search, Mic, Settings, X, Minus, Maximize2, Folder, Trash2, Pin, ScanLine,
   ExternalLink, Calculator, LayoutGrid, List, Plus, FolderPlus, FileType, Bot,
 } from "lucide-react";
 
@@ -48,6 +48,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAIChat, setShowAIChat] = useState(false);
   const [showFolderInput, setShowFolderInput] = useState(false);
+  const [maximized, setMaximized] = useState(false);
   const [iconCache, setIconCache] = useState<Record<number, string>>({});
   const [folderName, setFolderName] = useState("");
   const [folderPath, setFolderPath] = useState("");
@@ -146,6 +147,13 @@ export default function App() {
   const minimizeWindow = async () => {
     const w = await import("@tauri-apps/api/window"); await w.getCurrentWindow().minimize();
   };
+  const toggleMaximize = async () => {
+    const w = await import("@tauri-apps/api/window");
+    const win = w.getCurrentWindow();
+    const isMax = await win.isMaximized();
+    if (isMax) { await win.unmaximize(); setMaximized(false); }
+    else { await win.maximize(); setMaximized(true); }
+  };
 
   // 语音
   const toggleListening = () => {
@@ -219,6 +227,9 @@ export default function App() {
           </button>
           <button onClick={minimizeWindow} className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="最小化">
             <Minus className="w-4 h-4" />
+          </button>
+          <button onClick={toggleMaximize} className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title={maximized ? "还原" : "最大化"}>
+            <Maximize2 className="w-4 h-4" />
           </button>
           <button onClick={() => setShowSettings(true)} className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="设置">
             <Settings className="w-4 h-4" />
