@@ -34,7 +34,6 @@
         "center": true,
         "decorations": false,
         "transparent": true,
-        "alwaysOnTop": true,
         "focus": true,
         "visible": false
       }
