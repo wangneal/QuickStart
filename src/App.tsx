@@ -12,6 +12,13 @@ import {
 } from "lucide-react";
 
 // ---------- 工具函数 ----------
+const MENU_WIDTH = 176; // w-44 = 11rem = 176px
+const clampMenuPos = (x: number, y: number) => ({
+  left: Math.min(x, window.innerWidth - MENU_WIDTH - 8),
+  top: Math.min(y, window.innerHeight - 300),
+});
+
+// 分词：按空格、连字符、点号、驼峰分割
 // 分词：按空格、连字符、点号、驼峰分割
 const tokenize = (s: string): string[] => {
   return s
@@ -49,7 +56,7 @@ const AppCard = memo(function AppCard({ app, idx, selectedIndex, dragAppId, sear
     <button draggable onDragStart={() => onDragStart(app.id)} onDragEnd={onDragEnd}
       onClick={() => onClick(app)}
       onContextMenu={e => { e.preventDefault(); onContextMenu(app, e.clientX, e.clientY); }}
-      className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"} ${dragAppId === app.id ? "opacity-40" : ""}`}>
+      className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-1 ring-ring/40 shadow-sm" : "hover:bg-accent/50"} ${dragAppId === app.id ? "opacity-40" : ""}`}>
       <div className="w-12 h-12 rounded-xl overflow-hidden bg-secondary flex items-center justify-center">
         {iconCache[app.id] && iconCache[app.id] !== "__failed__"
           ? <img src={iconCache[app.id]} alt={app.name} className="w-full h-full object-contain app-icon" />
@@ -250,7 +257,7 @@ class SpeechManager {
     this.r.onend = () => this.onEnd(); this.r.onerror = () => this.onEnd();
     try { this.r.start(); } catch { this.onEnd(); }
   }
-  stop() { if (this.r) { try { this.r.stop(); } catch (e) { console.warn("speech stop:", e); } this.r = null; } this.onEnd(); }
+  stop() { if (this.r) { this.r.onend = null; this.r.onerror = null; try { this.r.stop(); } catch (e) { console.warn("speech stop:", e); } this.r = null; } this.onEnd(); }
 }
 
 interface FolderItem { id: number; name: string; path: string; category: string; sort_order: number; }
@@ -267,6 +274,7 @@ type DisplayItem =
 export default function App() {
   const { searchQuery, setSearchQuery, apps, setApps, isListening, setListening } = useStore();
   const inputRef = useRef<HTMLInputElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<"search" | "panel" | "folders">("search");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [scanning, setScanning] = useState(false);
@@ -283,16 +291,20 @@ export default function App() {
   const [showAIChat, setShowAIChat] = useState(false);
   const [showFolderInput, setShowFolderInput] = useState(false);
   const [newFolderCategory, setNewFolderCategory] = useState("未分类");
+  const [showFolderCategoryInput, setShowFolderCategoryInput] = useState(false);
+  const [newFolderCategoryName, setNewFolderCategoryName] = useState("");
   const [folderCm, setFolderCm] = useState<{ x: number; y: number; folder: FolderItem } | null>(null);
+  const [folderSelectedIndex, setFolderSelectedIndex] = useState(0);
   const [maximized, setMaximized] = useState(false);
   const [iconCache, setIconCache] = useState<Record<number, string>>({});
   const [toast, setToast] = useState<{msg:string;type:"ok"|"err"} | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const [fileResults, setFileResults] = useState<FileResult[]>([]);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
-
   const showToast = (msg:string, type:"ok"|"err"="ok") => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({msg,type});
-    setTimeout(() => setToast(null), 3000);
+    toastTimerRef.current = window.setTimeout(() => { setToast(null); toastTimerRef.current = null; }, 3000);
   };
   const [folderName, setFolderName] = useState("");
   const [folderPath, setFolderPath] = useState("");
@@ -335,9 +347,9 @@ export default function App() {
     } catch (e) {
       console.warn("scan_apps:", e);
       showToast("扫描失败", "err");
-    } finally {
-      setScanning(false);
+      setScanning(false); // 失败时立即重置（scan-complete 事件不会触发）
     }
+    // 成功时由 scan-complete 事件处理器负责 setScanning(false)
   }, []);
 
   // 版本更新检查
@@ -365,6 +377,7 @@ export default function App() {
       await loadApps();
       await loadFolders();
       await loadCategories();
+      await loadFolderCategories();
       // 加载搜索历史
       try { const h = await invoke<string[]>("get_search_history"); if (h) setSearchHistory(h); } catch (e) { console.warn("loadSearchHistory:", e); }
       // 检查是否需要扫描：DB 为空 或 超过 24 小时未扫描
@@ -385,6 +398,7 @@ export default function App() {
       await loadApps();
       await loadFolders();
       await loadCategories();
+      await loadFolderCategories();
       setScanning(false);
       showToast(`扫描完成，新增 ${r.new_count} 个应用${r.new_count > 0 ? ' 🎉' : ''}`, "ok");
     };
@@ -399,12 +413,16 @@ export default function App() {
   useEffect(() => {
     const q = searchQuery.trim();
     if (q.length < 2) { setFileResults([]); return; }
+    let cancelled = false;
     const timer = setTimeout(async () => {
-      try { const r = await invoke<FileResult[]>("search_files", { query: q }); setFileResults(r); } catch (e) { console.warn("search_files:", e); setFileResults([]); }
+      try {
+        const r = await invoke<FileResult[]>("search_files", { query: q });
+        if (!cancelled) setFileResults(r);
+      } catch (e) { console.warn("search_files:", e); if (!cancelled) setFileResults([]); }
     }, 200);
-    return () => clearTimeout(timer);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [searchQuery]);
-  useEffect(() => { const h = () => setCm(null); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, []);
+  useEffect(() => { const h = () => { setCm(null); setFolderCm(null); }; window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, []);
 
   // 分类
   const categories = useMemo(() => ["全部", ...categoryNames], [categoryNames]);
@@ -504,10 +522,52 @@ export default function App() {
     }
   }, [displayItems.length, selectedIndex]);
 
+  // 文件夹分类切换时重置选中索引
+  const filteredFolders = useMemo(() => {
+    return activeFolderCategory === "全部" ? folders : folders.filter(f => f.category === activeFolderCategory);
+  }, [folders, activeFolderCategory]);
+  useEffect(() => {
+    if (filteredFolders.length === 0) setFolderSelectedIndex(0);
+    else if (folderSelectedIndex >= filteredFolders.length) setFolderSelectedIndex(filteredFolders.length - 1);
+  }, [filteredFolders.length, folderSelectedIndex]);
+
+  // 键盘导航时自动滚动选中项到可视区
+  useEffect(() => {
+    if (!contentRef.current) return;
+    const idx = view === "folders" ? folderSelectedIndex : selectedIndex;
+    const grid = contentRef.current.querySelector(".grid-cols-5");
+    if (!grid) return;
+    const items = grid.children;
+    if (items[idx]) {
+      (items[idx] as HTMLElement).scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [selectedIndex, folderSelectedIndex, view]);
+
+  const GRID_COLS = 5;
+
   // 按键
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIndex(i => Math.min(i+1, displayItems.length-1)); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); setSelectedIndex(i => Math.max(i-1, 0)); }
+    // 优先关闭右键菜单和对话框
+    if (cm) { setCm(null); e.preventDefault(); return; }
+    if (folderCm) { setFolderCm(null); e.preventDefault(); return; }
+    if (catDialog) { setCatDialog(null); e.preventDefault(); return; }
+    // 文件夹视图的键盘导航
+    if (view === "folders" && !searchQuery.trim()) {
+      if (e.key === "Escape") { hideWindow(); return; }
+      if (filteredFolders.length === 0) return;
+      if (e.key === "ArrowRight") { e.preventDefault(); setFolderSelectedIndex(i => Math.min(i+1, filteredFolders.length-1)); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); setFolderSelectedIndex(i => Math.max(i-1, 0)); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); setFolderSelectedIndex(i => Math.min(i+GRID_COLS, filteredFolders.length-1)); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); setFolderSelectedIndex(i => Math.max(i-GRID_COLS, 0)); }
+      else if (e.key === "Enter") {
+        if (filteredFolders[folderSelectedIndex]) openFolder(filteredFolders[folderSelectedIndex].path);
+      }
+      return;
+    }
+    if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIndex(i => Math.min(i+GRID_COLS, displayItems.length-1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setSelectedIndex(i => Math.max(i-GRID_COLS, 0)); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); setSelectedIndex(i => Math.min(i+1, displayItems.length-1)); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); setSelectedIndex(i => Math.max(i-1, 0)); }
     else if (e.key === "Enter") {
       const item = displayItems[selectedIndex];
       if (item?.type === "app") launchApp(item.item);
@@ -633,7 +693,7 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [searchedApps, filteredByCategory, view, searchQuery]);
+  }, [searchedApps, filteredByCategory, view, searchQuery, iconCache]);
 
   const removeApp = async (id: number) => { try { await invoke("remove_app", {id}); await loadApps(); } catch (e) { console.warn("remove_app:", e); } setCm(null); };
   const togglePin = async (id: number) => { try { await invoke("toggle_pin_app", {id}); await loadApps(); } catch (e) { console.warn("toggle_pin_app:", e); } setCm(null); };
@@ -843,57 +903,12 @@ export default function App() {
               <button onClick={addCategory} className="h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs">创建</button>
               <button onClick={() => { setShowCategoryInput(false); setNewCategoryName(""); }} className="h-8 px-3 rounded-lg bg-secondary text-xs text-muted-foreground">取消</button>
             </div>
-                )}
-                {/* 文件夹右键菜单 */}
-                {folderCm && (
-                  <div className="fixed z-50 w-44 rounded-lg border border-border bg-popover p-1 shadow-xl" style={{ left: folderCm.x, top: folderCm.y }}
-                    onClick={e => e.stopPropagation()}>
-                    <button onClick={async () => {
-                      try { await invoke("reveal_in_explorer", { path: folderCm.folder.path }); } catch (e) { console.warn("reveal:", e); }
-                      setFolderCm(null);
-                    }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent">
-                      <ExternalLink className="w-4 h-4" />打开
-                    </button>
-                    <button onClick={async () => {
-                      try { await invoke("reveal_in_explorer", { path: folderCm.folder.path }); } catch (e) { console.warn("reveal:", e); }
-                      setFolderCm(null);
-                    }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent">
-                      <Folder className="w-4 h-4" />打开所在文件夹
-                    </button>
-                    <div className="h-px bg-border my-1" />
-                    <div className="px-2 py-1 text-xs text-muted-foreground">修改分类</div>
-                    <div className="max-h-32 overflow-y-auto">
-                      {folderCategories.map(cat => (
-                        <button key={cat} onClick={async () => {
-                          try {
-                            await invoke("update_folder_category", { id: folderCm.folder.id, category: cat });
-                            await loadFolders();
-                            showToast(`已移至分类：${cat}`, "ok");
-                          } catch (e) {
-                            console.warn("update_folder_category:", e);
-                            showToast(String(e), "err");
-                          }
-                          setFolderCm(null);
-                        }} className={`flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent ${cat === folderCm.folder.category ? "text-primary font-medium" : ""}`}>
-                          {cat === folderCm.folder.category && <span className="w-2 h-2 rounded-full bg-primary inline-block" />}
-                          {cat}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="h-px bg-border my-1" />
-                    <button onClick={async () => {
-                      await removeFolder(folderCm.folder.id);
-                      setFolderCm(null);
-                    }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-destructive/10 text-destructive">
-                      <Trash2 className="w-4 h-4" />删除
-                    </button>
-                  </div>
-                )}
-              </div>
+          )}
+        </div>
       )}
 
       {/* 内容区 */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      <div ref={contentRef} className="flex-1 overflow-y-auto px-4 pb-4">
         {/* 扫描中状态 */}
         {scanning && apps.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
@@ -902,9 +917,6 @@ export default function App() {
           </div>
         ) : view === "folders" && !searchQuery.trim() ? (
           (() => {
-            const filteredFolders = activeFolderCategory === "全部"
-              ? folders
-              : folders.filter(f => f.category === activeFolderCategory);
             return (
               <div className="flex flex-col gap-3">
                 {/* 文件夹分类标签栏 */}
@@ -921,24 +933,58 @@ export default function App() {
                       </button>
                     ))}
                     <button
-                      onClick={async () => {
-                        const name = prompt("输入文件夹分类名称：");
-                        if (name && name.trim()) {
-                          try {
-                            await invoke("add_folder_category", { name: name.trim() });
-                            await loadFolderCategories();
-                            showToast(`已创建分类：${name.trim()}`, "ok");
-                          } catch (e) {
-                            console.warn("add_folder_category:", e);
-                            showToast(String(e), "err");
-                          }
-                        }
-                      }}
+                      onClick={() => setShowFolderCategoryInput(v => !v)}
                       className="whitespace-nowrap px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                     >
                       + 分类
                     </button>
                   </div>
+                  {showFolderCategoryInput && (
+                    <div className="flex gap-1.5">
+                      <input
+                        value={newFolderCategoryName}
+                        onChange={e => setNewFolderCategoryName(e.target.value)}
+                        onKeyDown={async e => {
+                          if (e.key === "Enter") {
+                            const name = newFolderCategoryName.trim();
+                            if (name && !folderCategories.some(c => c.toLowerCase() === name.toLowerCase())) {
+                              try {
+                                await invoke("add_folder_category", { name });
+                                await loadFolderCategories();
+                                showToast(`已创建分类：${name}`, "ok");
+                                setNewFolderCategoryName("");
+                              } catch (e) {
+                                console.warn("add_folder_category:", e);
+                                showToast(String(e), "err");
+                              }
+                            } else {
+                              showToast("分类已存在或名称为空", "err");
+                            }
+                          }
+                          if (e.key === "Escape") { setShowFolderCategoryInput(false); setNewFolderCategoryName(""); }
+                        }}
+                        placeholder="新分类名称"
+                        className="h-6 px-2 rounded-lg bg-secondary text-xs border border-border focus:outline-none focus:ring-1 focus:ring-ring w-32"
+                        autoFocus
+                      />
+                      <button onClick={async () => {
+                        const name = newFolderCategoryName.trim();
+                        if (name && !folderCategories.some(c => c.toLowerCase() === name.toLowerCase())) {
+                          try {
+                            await invoke("add_folder_category", { name });
+                            await loadFolderCategories();
+                            showToast(`已创建分类：${name}`, "ok");
+                            setNewFolderCategoryName("");
+                            setShowFolderCategoryInput(false);
+                          } catch (e) {
+                            console.warn("add_folder_category:", e);
+                            showToast(String(e), "err");
+                          }
+                        }
+                      }} className="h-6 px-2 rounded-lg bg-primary text-primary-foreground text-xs">创建</button>
+                      <button onClick={() => { setShowFolderCategoryInput(false); setNewFolderCategoryName(""); }} className="h-6 px-2 rounded-lg bg-secondary text-xs text-muted-foreground">取消</button>
+                    </div>
+                  )}
                   <button onClick={() => setShowFolderInput(!showFolderInput)} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0" title="添加文件夹">
                     <FolderPlus className="w-4 h-4" />
                   </button>
@@ -974,9 +1020,9 @@ export default function App() {
                 {/* 文件夹 grid */}
                 {filteredFolders.length > 0 ? (
                   <div className="grid grid-cols-5 gap-2">
-                    {filteredFolders.map(f => (
-                      <button key={f.id} onClick={() => openFolder(f.path)} onContextMenu={e => { e.preventDefault(); setFolderCm({ x: e.clientX, y: e.clientY, folder: f }); }}
-                        className="relative flex flex-col items-center gap-1.5 p-3 rounded-xl bg-secondary hover:bg-accent transition-colors group">
+                    {filteredFolders.map((f, fi) => (
+                      <button key={f.id} onClick={() => openFolder(f.path)} onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCm(null); setFolderCm({ x: e.clientX, y: e.clientY, folder: f }); }}
+                        className={`relative flex flex-col items-center gap-1.5 p-3 rounded-xl transition-colors group ${fi === folderSelectedIndex ? "bg-accent ring-1 ring-ring/40 shadow-sm" : "bg-secondary hover:bg-accent/50"}`}>
                         <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
                           <Folder className="w-7 h-7 text-amber-500" />
                         </div>
@@ -1068,13 +1114,14 @@ export default function App() {
             {(() => {
               const appItems = displayItems.filter(i => i.type === "app" || i.type === "calc");
               const folderItems = displayItems.filter(i => i.type === "folder" || i.type === "file");
-              const appStartIdx = 0;
+              const itemIndexMap = new Map<DisplayItem, number>();
+              displayItems.forEach((item, idx) => itemIndexMap.set(item, idx));
               return (
                 <>
                   {appItems.length > 0 && (
                     <div className="grid grid-cols-5 gap-2" style={{ contentVisibility: "auto" }}>
                       {appItems.map((item) => {
-                        const idx = displayItems.indexOf(item);
+                        const idx = itemIndexMap.get(item) ?? 0;
                         if (item.type === "calc") return (
                           <div key="calc" className="col-span-5 flex items-center gap-3 p-3 rounded-xl transition-all" style={{contentVisibility:"visible"}}>
                             <Calculator className="w-5 h-5 text-primary" />
@@ -1087,7 +1134,7 @@ export default function App() {
                           searchQuery={searchQuery} iconCache={iconCache}
                           onDragStart={onDragStart} onDragEnd={onDragEnd}
                           onClick={launchApp}
-                          onContextMenu={(a2, cx, cy) => setCm({x: cx, y: cy, app: a2})}
+                            onContextMenu={(a2, cx, cy) => { setFolderCm(null); setCm({x: cx, y: cy, app: a2}); }}
                         />;
                       })}
                     </div>
@@ -1100,12 +1147,12 @@ export default function App() {
                       </span>
                       <div className="grid grid-cols-5 gap-2" style={{ contentVisibility: "auto" }}>
                         {folderItems.map((item) => {
-                          const idx = displayItems.indexOf(item);
+                          const idx = itemIndexMap.get(item) ?? 0;
                           if (item.type === "file") {
                             const f = item.item as {name:string;path:string;is_dir:boolean};
                             return (
                               <button key={`file-${f.path}`} onClick={() => openFile(f.path)}
-                                className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}
+                                className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-1 ring-ring/40 shadow-sm" : "hover:bg-accent/50"}`}
                                 style={{contentVisibility:"visible"}}>
                                 <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
                                   <Folder className="w-7 h-7 text-blue-500" />
@@ -1118,7 +1165,7 @@ export default function App() {
                           const f = item.item as FolderItem;
                           return (
                             <button key={`f-${f.id}`} onClick={() => openFolder(f.path)}
-                              className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}
+                              className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-1 ring-ring/40 shadow-sm" : "hover:bg-accent/50"}`}
                               onContextMenu={e => { e.preventDefault(); }}
                               style={{contentVisibility:"visible"}}>
                               <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
@@ -1139,15 +1186,61 @@ export default function App() {
         )}
       </div>
 
-      {/* 右键菜单 */}
+      {/* 右键菜单 — 应用 */}
       {cm && (
-        <div className="fixed z-50 w-44 rounded-lg border border-border bg-popover p-1 shadow-xl" style={{left: cm.x, top: cm.y}}>
+        <div className="fixed z-50 w-44 rounded-lg border border-border bg-popover p-1 shadow-xl" style={(() => { const p = clampMenuPos(cm.x, cm.y); return { left: p.left, top: p.top }; })()} onClick={e => e.stopPropagation()}>
           <button onClick={() => { launchApp(cm.app); setCm(null); }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><ExternalLink className="w-4 h-4" />启动</button>
           <button onClick={() => togglePin(cm.app.id)} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><Pin className="w-4 h-4" />{cm.app.is_pinned ? "取消固定" : "固定到顶部"}</button>
-          <button onClick={() => { setCatDialog(cm.app); setCatInput(cm.app.category); setCm(null); }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><FileType className="w-4 h-4" />修改分类</button>
+          <button onClick={() => { setCatDialog(cm.app); setCatInput(cm.app.category); setCm(null); setFolderCm(null); }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><FileType className="w-4 h-4" />修改分类</button>
           <button onClick={async () => { try { await invoke("reveal_in_explorer", { path: cm.app.path }); } catch (e) { console.warn("reveal:", e); } setCm(null); }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent"><Folder className="w-4 h-4" />打开所在文件夹</button>
           <div className="h-px bg-border my-1" />
           <button onClick={() => removeApp(cm.app.id)} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-destructive/10 text-destructive"><Trash2 className="w-4 h-4" />删除</button>
+        </div>
+      )}
+
+      {/* 右键菜单 — 文件夹 */}
+      {folderCm && (
+        <div className="fixed z-50 w-44 rounded-lg border border-border bg-popover p-1 shadow-xl" style={(() => { const p = clampMenuPos(folderCm.x, folderCm.y); return { left: p.left, top: p.top }; })()}
+          onClick={e => e.stopPropagation()}>
+          <button onClick={async () => {
+            try { await openFolder(folderCm.folder.path); } catch (e) { showToast("打开失败", "err"); }
+            setFolderCm(null);
+          }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent">
+            <ExternalLink className="w-4 h-4" />打开
+          </button>
+          <button onClick={async () => {
+            try { await invoke("reveal_in_explorer", { path: folderCm.folder.path }); } catch (e) { console.warn("reveal:", e); }
+            setFolderCm(null);
+          }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent">
+            <Folder className="w-4 h-4" />打开所在文件夹
+          </button>
+          <div className="h-px bg-border my-1" />
+          <div className="px-2 py-1 text-xs text-muted-foreground">修改分类</div>
+          <div className="max-h-32 overflow-y-auto">
+            {folderCategories.map(cat => (
+              <button key={cat} onClick={async () => {
+                try {
+                  await invoke("update_folder_category", { id: folderCm.folder.id, category: cat });
+                  await loadFolders();
+                  showToast(`已移至分类：${cat}`, "ok");
+                } catch (e) {
+                  console.warn("update_folder_category:", e);
+                  showToast(String(e), "err");
+                }
+                setFolderCm(null);
+              }} className={`flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-accent ${cat === folderCm.folder.category ? "text-primary font-medium" : ""}`}>
+                {cat === folderCm.folder.category && <span className="w-2 h-2 rounded-full bg-primary inline-block" />}
+                {cat}
+              </button>
+            ))}
+          </div>
+          <div className="h-px bg-border my-1" />
+          <button onClick={async () => {
+            await removeFolder(folderCm.folder.id);
+            setFolderCm(null);
+          }} className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md hover:bg-destructive/10 text-destructive">
+            <Trash2 className="w-4 h-4" />删除
+          </button>
         </div>
       )}
 
@@ -1164,7 +1257,7 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <input value={catInput} onChange={e => setCatInput(e.target.value)} placeholder="输入新分类名称..." className="w-full h-8 px-2 rounded-lg bg-secondary text-xs border border-border focus:outline-none focus:ring-1 focus:ring-ring mb-2" />
+            <input value={catInput} onChange={e => setCatInput(e.target.value)} autoFocus placeholder="输入新分类名称..." className="w-full h-8 px-2 rounded-lg bg-secondary text-xs border border-border focus:outline-none focus:ring-1 focus:ring-ring mb-2" />
             <button onClick={() => { if (catInput.trim()) updateCategory(catDialog.id, catInput.trim()); setCatDialog(null); }} className="w-full h-8 rounded-lg bg-primary text-primary-foreground text-xs">确认</button>
           </div>
         </div>
