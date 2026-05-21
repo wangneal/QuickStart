@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
-import { open } from "@tauri-apps/plugin-shell";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "./lib/utils";
 import { useStore, type AppItem } from "./store";
@@ -468,9 +466,12 @@ export default function App() {
   const displayItems = useMemo(() => {
     const items: DisplayItem[] = [];
     if (showCalc && calcResult) items.push({type:"calc", item:{label:calcResult}});
-    searchedFolders.forEach(f => items.push({type:"folder", item:f}));
     searchedApps.forEach(a => items.push({type:"app", item:a}));
-    fileResults.forEach(f => { if (searchQuery.trim()) items.push({type:"file", item:f}); });
+    // 文件夹仅在搜索模式或面板搜索时加入显示列表（面板无搜索时由底部区域单独渲染）
+    if (searchQuery.trim()) {
+      searchedFolders.forEach(f => items.push({type:"folder", item:f}));
+      fileResults.forEach(f => items.push({type:"file", item:f}));
+    }
     return items;
   }, [searchedApps, searchedFolders, fileResults, showCalc, calcResult, searchQuery]);
 
@@ -504,10 +505,10 @@ export default function App() {
     } catch (e) { console.warn("launchApp error:", app.path, e); showToast("启动失败: " + e, "err"); }
   };
   const openFolder = async (path: string) => {
-    try { await open(path); } catch (e) { console.warn("openFolder:", e); }
+    try { await invoke("launch_app", { path }); } catch (e) { console.warn("openFolder:", e); showToast("打开文件夹失败: " + e, "err"); }
   };
   const openFile = async (path: string) => {
-    try { await open(path); } catch (e) { console.warn("openFile:", e); }
+    try { await invoke("launch_app", { path }); } catch (e) { console.warn("openFile:", e); showToast("打开文件失败: " + e, "err"); }
   };
   // ---------- 拖拽分类（HTML5 原生） ----------
   const [dragAppId, setDragAppId] = useState<number | null>(null);
@@ -819,52 +820,79 @@ export default function App() {
             <p className="text-xs mt-1">拖拽 exe 到这里添加</p>
           </div>
         ) : (
-          <div className="grid grid-cols-5 gap-2" style={{ contentVisibility: "auto" }}>
-            {displayItems.map((item, idx) => {
-              if (item.type === "calc") return (
-                <div key="calc" className="col-span-5 flex items-center gap-3 p-3 rounded-xl transition-all" style={{contentVisibility:"visible"}}>
-                  <Calculator className="w-5 h-5 text-primary" />
-                  <span className="text-lg font-mono font-bold text-foreground">{item.item.label}</span>
-                </div>
+          <>
+            {/* 应用区域 */}
+            {(() => {
+              const appItems = displayItems.filter(i => i.type === "app" || i.type === "calc");
+              const folderItems = displayItems.filter(i => i.type === "folder" || i.type === "file");
+              const appStartIdx = 0;
+              return (
+                <>
+                  {appItems.length > 0 && (
+                    <div className="grid grid-cols-5 gap-2" style={{ contentVisibility: "auto" }}>
+                      {appItems.map((item) => {
+                        const idx = displayItems.indexOf(item);
+                        if (item.type === "calc") return (
+                          <div key="calc" className="col-span-5 flex items-center gap-3 p-3 rounded-xl transition-all" style={{contentVisibility:"visible"}}>
+                            <Calculator className="w-5 h-5 text-primary" />
+                            <span className="text-lg font-mono font-bold text-foreground">{item.item.label}</span>
+                          </div>
+                        );
+                        const app = item.item as AppItem;
+                        return <AppCard key={app.id} app={app}
+                          idx={idx} selectedIndex={selectedIndex} dragAppId={dragAppId}
+                          searchQuery={searchQuery} iconCache={iconCache}
+                          onDragStart={onDragStart} onDragEnd={onDragEnd}
+                          onClick={launchApp}
+                          onContextMenu={(a2, cx, cy) => setCm({x: cx, y: cy, app: a2})}
+                        />;
+                      })}
+                    </div>
+                  )}
+                  {/* 文件夹/文件区域 — 分区显示，避免与应用混淆 */}
+                  {folderItems.length > 0 && (
+                    <div className="mt-3">
+                      <span className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                        <Folder className="w-3.5 h-3.5 inline mr-1 text-amber-500" />文件夹
+                      </span>
+                      <div className="grid grid-cols-5 gap-2" style={{ contentVisibility: "auto" }}>
+                        {folderItems.map((item) => {
+                          const idx = displayItems.indexOf(item);
+                          if (item.type === "file") {
+                            const f = item.item as {name:string;path:string;is_dir:boolean};
+                            return (
+                              <button key={`file-${f.path}`} onClick={() => openFile(f.path)}
+                                className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}
+                                style={{contentVisibility:"visible"}}>
+                                <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
+                                  <Folder className="w-7 h-7 text-blue-500" />
+                                </div>
+                                <span className="text-xs text-center text-muted-foreground truncate w-full">{f.name}</span>
+                                <span className="text-[9px] text-muted-foreground/50 truncate w-full">{f.is_dir ? "文件夹" : "文件"}</span>
+                              </button>
+                            );
+                          }
+                          const f = item.item as FolderItem;
+                          return (
+                            <button key={`f-${f.id}`} onClick={() => openFolder(f.path)}
+                              className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}
+                              onContextMenu={e => { e.preventDefault(); }}
+                              style={{contentVisibility:"visible"}}>
+                              <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                                <Folder className="w-7 h-7 text-amber-500" />
+                              </div>
+                              <span className="text-xs text-center text-muted-foreground truncate w-full">{f.name}</span>
+                              <span className="text-[9px] text-muted-foreground/50 truncate w-full">文件夹</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
               );
-              if (item.type === "file") {
-                const f = item.item as {name:string;path:string;is_dir:boolean};
-                return (
-                  <button key={`file-${f.path}`} onClick={() => openFile(f.path)}
-                    className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}
-                    style={{contentVisibility:"visible"}}>
-                    <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                      <Folder className="w-7 h-7 text-blue-500" />
-                    </div>
-                    <span className="text-xs text-center text-muted-foreground truncate w-full">{f.name}</span>
-                    <span className="text-[9px] text-muted-foreground/50 truncate w-full">{f.is_dir ? "文件夹" : "文件"}</span>
-                  </button>
-                );
-              }
-              if (item.type === "folder") {
-                const f = item.item as FolderItem;
-                return (
-                  <button key={`f-${f.id}`} onClick={() => openFolder(f.path)}
-                    className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"}`}
-                    onContextMenu={e => { e.preventDefault(); }}
-                    style={{contentVisibility:"visible"}}>
-                    <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
-                      <Folder className="w-7 h-7 text-amber-500" />
-                    </div>
-                    <span className="text-xs text-center text-muted-foreground truncate w-full">{f.name}</span>
-                  </button>
-                );
-              }
-              const app = item.item as AppItem;
-              return <AppCard key={app.id} app={app}
-                idx={idx} selectedIndex={selectedIndex} dragAppId={dragAppId}
-                searchQuery={searchQuery} iconCache={iconCache}
-                onDragStart={onDragStart} onDragEnd={onDragEnd}
-                onClick={launchApp}
-                onContextMenu={(a2, cx, cy) => setCm({x: cx, y: cy, app: a2})}
-              />;
-            })}
-          </div>
+            })()}
+          </>
         )}
       </div>
 
