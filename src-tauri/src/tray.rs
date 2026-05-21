@@ -1,6 +1,7 @@
+use crate::window_utils::toggle_window;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
     App, Manager, Runtime,
 };
 
@@ -28,12 +29,7 @@ pub fn create_tray<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::E
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) {
-                        let _ = window.hide();
-                    } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    toggle_window(&window);
                 }
             }
             "quit" => {
@@ -43,19 +39,14 @@ pub fn create_tray<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::E
         })
         .on_tray_icon_event(|tray, event| {
             match event {
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
+                tauri::tray::TrayIconEvent::Click {
+                    button: tauri::tray::MouseButton::Left,
+                    button_state: tauri::tray::MouseButtonState::Up,
                     ..
                 } => {
                     let app = tray.app_handle();
                     if let Some(window) = app.get_webview_window("main") {
-                        if window.is_visible().unwrap_or(false) {
-                            let _ = window.hide();
-                        } else {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        toggle_window(&window);
                     }
                 }
                 _ => {}

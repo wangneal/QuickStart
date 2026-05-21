@@ -2,18 +2,45 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import Fuse from "fuse.js";
 import { invoke } from "./lib/utils";
 import { useStore, type AppItem } from "./store";
 import AIChat from "./AIChat";
 import SettingsPanel from "./Settings";
 
+import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import {
   Search, Mic, Settings, X, Minus, Maximize2, Folder, Trash2, Pin, ScanLine,
   ExternalLink, Calculator, LayoutGrid, List, Plus, FolderPlus, FileType, Bot,
 } from "lucide-react";
 
 // ---------- 工具函数 ----------
+// 分词：按空格、连字符、点号、驼峰分割
+const tokenize = (s: string): string[] => {
+  return s
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[-_.]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length > 0)
+    .map(t => t.toLowerCase());
+};
+
+// 常见缩写映射
+const ABBREVIATIONS: Record<string, string[]> = {
+  'vs': ['visual studio'],
+  'vscode': ['visual studio code'],
+  'vsc': ['visual studio code'],
+  'ps': ['powershell', 'photoshop'],
+  'edge': ['microsoft edge'],
+  'ie': ['internet explorer'],
+  'cmd': ['command prompt'],
+  'wsl': ['windows subsystem linux'],
+  'npp': ['notepad++'],
+  'fnm': ['firefox nightly'],
+  'wt': ['windows terminal'],
+  'reg': ['registry editor', 'regedit'],
+  'calc': ['calculator'],
+};
+
 const AppCard = memo(function AppCard({ app, idx, selectedIndex, dragAppId, searchQuery, iconCache, onDragStart, onDragEnd, onClick, onContextMenu }: {
   app: AppItem; idx: number; selectedIndex: number; dragAppId: number | null;
   searchQuery: string; iconCache: Record<number,string>;
@@ -26,8 +53,8 @@ const AppCard = memo(function AppCard({ app, idx, selectedIndex, dragAppId, sear
       onContextMenu={e => { e.preventDefault(); onContextMenu(app, e.clientX, e.clientY); }}
       className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl transition-all group ${idx === selectedIndex ? "bg-accent ring-2 ring-ring scale-105" : "hover:bg-accent/50"} ${dragAppId === app.id ? "opacity-40" : ""}`}>
       <div className="w-12 h-12 rounded-xl overflow-hidden bg-secondary flex items-center justify-center">
-        {iconCache[app.id]
-          ? <img src={iconCache[app.id]} alt={app.name} className="w-full h-full object-contain" />
+        {iconCache[app.id] && iconCache[app.id] !== "__failed__"
+          ? <img src={iconCache[app.id]} alt={app.name} className="w-full h-full object-contain app-icon" />
           : <span className="text-lg font-bold text-foreground">{app.name.charAt(0)}</span>}
       </div>
       <span className="text-xs text-center text-muted-foreground truncate w-full leading-tight">{highlight(app.name, searchQuery)}</span>
@@ -39,16 +66,179 @@ const AppCard = memo(function AppCard({ app, idx, selectedIndex, dragAppId, sear
 
 function highlight(text: string, query: string): React.ReactNode {
   if (!query) return <>{text}</>;
-  const idx = text.toLowerCase().indexOf(query.toLowerCase());
-  if (idx === -1) return <>{text}</>;
-  return <>{text.slice(0,idx)}<mark className="bg-primary/20 text-foreground rounded px-0.5">{text.slice(idx,idx+query.length)}</mark>{text.slice(idx+query.length)}</>;
+  const q = query.toLowerCase().trim();
+  const tokens = tokenize(query);
+  const textLower = text.toLowerCase();
+
+  // 找出所有需要高亮的区间
+  const ranges: [number, number][] = [];
+
+  // 1. 直接子串匹配区间
+  const directIdx = textLower.indexOf(q);
+  if (directIdx !== -1) ranges.push([directIdx, directIdx + q.length]);
+
+  // 2. 每个 token 的前缀匹配区间
+  const nameTokens = tokenize(text);
+  let offset = 0;
+  for (const nt of nameTokens) {
+    const startInOriginal = textLower.indexOf(nt, offset);
+    if (startInOriginal !== -1) {
+      for (const qt of tokens) {
+        if (nt.startsWith(qt)) {
+          ranges.push([startInOriginal, startInOriginal + qt.length]);
+        }
+      }
+      offset = startInOriginal + nt.length;
+    }
+  }
+
+  // 3. 缩写映射 — 全名高亮
+  for (const [abbr, expansions] of Object.entries(ABBREVIATIONS)) {
+    if (tokens.includes(abbr)) {
+      for (const exp of expansions) {
+        const expIdx = textLower.indexOf(exp);
+        if (expIdx !== -1) ranges.push([expIdx, expIdx + exp.length]);
+      }
+    }
+  }
+
+  // 合并重叠区间
+  if (ranges.length === 0) return <>{text}</>;
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [ranges[0]];
+  for (const [s, e] of ranges.slice(1)) {
+    const last = merged[merged.length - 1];
+    if (s <= last[1]) { last[1] = Math.max(last[1], e); }
+    else { merged.push([s, e]); }
+  }
+
+  // 构建高亮结果
+  const parts: React.ReactNode[] = [];
+  let lastEnd = 0;
+  for (const [s, e] of merged) {
+    if (s > lastEnd) parts.push(text.slice(lastEnd, s));
+    parts.push(<mark className="bg-primary/20 text-foreground rounded px-0.5">{text.slice(s, e)}</mark>);
+    lastEnd = e;
+  }
+  if (lastEnd < text.length) parts.push(text.slice(lastEnd));
+  return <>{parts}</>;
 }
 
 function safeEval(expr: string): number | null {
-  const s = expr.replace(/×/g,"*").replace(/÷/g,"/").replace(/\s/g,"").replace(/[^0-9+\-*/.()%]/g,"");
-  if (!s || /^[+\-*/]/.test(s)) return null;
-  try { const r = Function(`"use strict"; return (${s})`)(); if (typeof r === "number" && isFinite(r)) return r; } catch (e) { console.warn("safeEval:", e); }
-  return null;
+  const s = expr.replace(/×/g, "*").replace(/÷/g, "/").replace(/\s/g, "");
+  if (!s) return null;
+
+  // Tokenizer
+  type Token = { type: 'num' | 'op'; value: string };
+  const tokens: Token[] = [];
+  let i = 0;
+
+  while (i < s.length) {
+    const c = s[i];
+    if (/\d/.test(c) || c === '.') {
+      let num = '';
+      let dotCount = 0;
+      while (i < s.length && (/\d/.test(s[i]) || s[i] === '.')) {
+        if (s[i] === '.') {
+          dotCount++;
+          if (dotCount > 1) return null;
+        }
+        num += s[i];
+        i++;
+      }
+      if (num === '.' || num.endsWith('.')) return null;
+      tokens.push({ type: 'num', value: num });
+    } else if ('+-*/%()'.includes(c)) {
+      tokens.push({ type: 'op', value: c });
+      i++;
+    } else {
+      return null;
+    }
+  }
+
+  if (tokens.length === 0) return null;
+
+  // Parser with proper precedence (recursive descent)
+  let pos = 0;
+
+  function parseExpr(): number | null { return parseAddSub(); }
+
+  function parseAddSub(): number | null {
+    let left = parseMulDiv();
+    if (left === null) return null;
+    while (pos < tokens.length) {
+      const op = tokens[pos];
+      if (op.type !== 'op' || (op.value !== '+' && op.value !== '-')) break;
+      pos++;
+      const right = parseMulDiv();
+      if (right === null) return null;
+      left = op.value === '+' ? left + right : left - right;
+    }
+    return left;
+  }
+
+  function parseMulDiv(): number | null {
+    let left = parsePercent();
+    if (left === null) return null;
+    while (pos < tokens.length) {
+      const op = tokens[pos];
+      if (op.type !== 'op' || (op.value !== '*' && op.value !== '/')) break;
+      pos++;
+      const right = parsePercent();
+      if (right === null) return null;
+      if (op.value === '/') {
+        if (right === 0) return null;
+        left = left / right;
+      } else {
+        left = left * right;
+      }
+    }
+    return left;
+  }
+
+  function parsePercent(): number | null {
+    let left = parseUnary();
+    if (left === null) return null;
+    while (pos < tokens.length && tokens[pos].type === 'op' && tokens[pos].value === '%') {
+      pos++;
+      left = left / 100;
+    }
+    return left;
+  }
+
+  function parseUnary(): number | null {
+    if (pos >= tokens.length) return parseAtom();
+    const op = tokens[pos];
+    if (op.type === 'op' && (op.value === '+' || op.value === '-')) {
+      pos++;
+      const operand = parseUnary();
+      if (operand === null) return null;
+      return op.value === '-' ? -operand : operand;
+    }
+    return parseAtom();
+  }
+
+  function parseAtom(): number | null {
+    if (pos >= tokens.length) return null;
+    const tok = tokens[pos];
+    if (tok.type === 'num') {
+      pos++;
+      return parseFloat(tok.value);
+    }
+    if (tok.type === 'op' && tok.value === '(') {
+      pos++;
+      const val = parseExpr();
+      if (val === null || pos >= tokens.length || tokens[pos].value !== ')') return null;
+      pos++;
+      return val;
+    }
+    return null;
+  }
+
+  const result = parseExpr();
+  if (result === null || pos < tokens.length) return null;
+  if (typeof result !== 'number' || !isFinite(result)) return null;
+  return result;
 }
 
 class SpeechManager {
@@ -87,6 +277,7 @@ export default function App() {
   const [showCalc, setShowCalc] = useState(false);
   const speechRef = useRef<SpeechManager|null>(null);
   const [folders, setFolders] = useState<FolderItem[]>([]);
+  const [categoryNames, setCategoryNames] = useState<string[]>([]);
   const [activeCategory, setActiveCategory] = useState("全部");
   const [showSettings, setShowSettings] = useState(false);
   const [showAIChat, setShowAIChat] = useState(false);
@@ -102,6 +293,8 @@ export default function App() {
   };
   const [folderName, setFolderName] = useState("");
   const [folderPath, setFolderPath] = useState("");
+  const [showCategoryInput, setShowCategoryInput] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
 
   // 数据加载
   const loadApps = useCallback(async () => {
@@ -110,16 +303,23 @@ export default function App() {
   const loadFolders = useCallback(async () => {
     try { const list = await invoke<FolderItem[]>("get_folder_list"); if (list) setFolders(list); } catch (e) { console.warn("loadFolders:", e); }
   }, []);
+  const loadCategories = useCallback(async () => {
+    try {
+      const list = await invoke<string[]>("get_categories");
+      setCategoryNames(list.filter(c => c.trim() && c !== "全部"));
+    } catch (e) {
+      console.warn("loadCategories:", e);
+    }
+  }, []);
   const doScan = useCallback(async () => {
     setScanning(true);
     try {
-      const r = await invoke<ScanAppsResult>("scan_apps");
-      await invoke("classify_uncategorized");
-      try { await invoke("ai_classify_apps"); } catch (e) { console.warn("ai classify skipped:", e); }
-      await loadApps();
-      showToast(`扫描完成，新增 ${r.new_count} 个应用${r.new_count > 0 ? ' 🎉' : ''}`, "ok");
+      void invoke<ScanAppsResult>("scan_apps").catch(e => {
+        console.warn("scan_apps:", e);
+        setScanning(false);
+        showToast("扫描失败", "err");
+      });
     } catch (e) { console.warn("scan_apps:", e); showToast("扫描失败", "err"); }
-    finally { setScanning(false); }
   }, [loadApps]);
 
   // 版本更新检查
@@ -141,7 +341,38 @@ export default function App() {
     }).catch(e => console.warn("theme init:", e));
   }, []);
 
-  useEffect(() => { loadApps().then(() => { if (apps.length === 0) doScan(); }); loadFolders(); }, []);
+  // 启动时：加载已有数据 → 判断是否需要自动扫描
+  useEffect(() => {
+    const init = async () => {
+      await loadApps();
+      await loadFolders();
+      await loadCategories();
+      // 检查是否需要扫描：DB 为空 或 超过 24 小时未扫描
+      const lastScan = await invoke<string>("get_last_scan_time");
+      const needScan = !lastScan || (Date.now() / 1000 - parseInt(lastScan, 10)) > 86400;
+      if (needScan) {
+        doScan(); // 后台静默扫描，不阻塞 UI
+      }
+    };
+    init();
+  }, [doScan, loadApps, loadFolders, loadCategories]);
+
+  useEffect(() => {
+    const onScanComplete = async (event: { payload: ScanAppsResult }) => {
+      const r = event.payload;
+      try { await invoke("classify_uncategorized"); } catch (e) { console.warn("classify_uncategorized:", e); }
+      try { await invoke("ai_classify_apps"); } catch (e) { console.warn("ai classify skipped:", e); }
+      await loadApps();
+      await loadFolders();
+      await loadCategories();
+      setScanning(false);
+      showToast(`扫描完成，新增 ${r.new_count} 个应用${r.new_count > 0 ? ' 🎉' : ''}`, "ok");
+    };
+    const unlistenPromise = import("@tauri-apps/api/event").then(({ listen }) =>
+      listen("scan-complete", onScanComplete)
+    );
+    return () => { void unlistenPromise.then(unlisten => unlisten()); };
+  }, [loadApps, loadFolders, loadCategories]);
   useEffect(() => { inputRef.current?.focus(); }, [view]);
 
   // 文件搜索（输入至少 2 个字符后触发）
@@ -156,32 +387,75 @@ export default function App() {
   useEffect(() => { const h = () => setCm(null); window.addEventListener("click", h); return () => window.removeEventListener("click", h); }, []);
 
   // 分类
-  const categories = useMemo(() => {
-    const cats = new Set<string>();
-    apps.forEach(a => cats.add(a.category || "其他"));
-    return ["全部", ...Array.from(cats).sort()];
-  }, [apps]);
+  const categories = useMemo(() => ["全部", ...categoryNames], [categoryNames]);
 
   const filteredByCategory = useMemo(() => {
     if (activeCategory === "全部") return apps;
     return apps.filter(a => (a.category || "其他") === activeCategory);
   }, [apps, activeCategory]);
 
-  // 搜索
-  const fuse = useMemo(() => new Fuse(apps, { keys: ["name","path","category"], threshold: 0.4, distance: 100, minMatchCharLength: 1 }), [apps]);
+  // 分词匹配搜索
+  const matchSearch = (appName: string, appPath: string, appCategory: string, query: string): boolean => {
+    const q = query.toLowerCase().trim();
+    if (!q) return false;
+    const nameLower = appName.toLowerCase();
+    const pathLower = appPath.toLowerCase();
+    const catLower = appCategory.toLowerCase();
+
+    // 1. 直接子串匹配（最高优先级）
+    if (nameLower.includes(q) || pathLower.includes(q) || catLower.includes(q)) return true;
+
+    // 2. 分词匹配：每个查询 token 匹配名称中某个 token 的前缀
+    const nameTokens = tokenize(appName);
+    const queryTokens = tokenize(query);
+
+    const allQueryTokensMatch = queryTokens.every(qt => {
+      // 检查查询 token 是否匹配名称中某个 token 的前缀
+      const matchesNameToken = nameTokens.some(nt => nt.startsWith(qt));
+      if (matchesNameToken) return true;
+
+      // 检查查询 token 是否匹配名称整体的前缀
+      if (nameLower.startsWith(qt)) return true;
+
+      // 检查路径/分类
+      if (pathLower.includes(qt) || catLower.includes(qt)) return true;
+
+      // 检查缩写映射
+      const expanded = ABBREVIATIONS[qt];
+      if (expanded) {
+        return expanded.some(exp => nameLower.includes(exp) || pathLower.includes(exp));
+      }
+
+      return false;
+    });
+
+    if (allQueryTokensMatch) return true;
+
+    // 3. 缩写反向匹配：名称可能包含缩写，查询包含全名
+    for (const [abbr, expansions] of Object.entries(ABBREVIATIONS)) {
+      if (nameLower.includes(abbr) || nameTokens.some(nt => nt === abbr)) {
+        if (expansions.some(exp => queryTokens.some(qt => exp.includes(qt)))) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  };
+
   const isCalcQuery = /^[\d+\-*/().%×÷\s]+$/.test(searchQuery.trim()) && searchQuery.trim().length > 1;
   const searchedApps = useMemo(() => {
     const q = searchQuery.trim();
-    if (!q) return filteredByCategory;
+    if (!q) return view === "panel" ? filteredByCategory : [];
     if (isCalcQuery) return [];
-    return fuse.search(q).map(r => r.item);
-  }, [searchQuery, filteredByCategory, fuse, isCalcQuery]);
+    return apps.filter(a => matchSearch(a.name, a.path, a.category || "其他", q));
+  }, [searchQuery, filteredByCategory, apps, isCalcQuery, view]);
 
-  // 搜索文件夹也纳入结果
+  // 搜索文件夹也纳入结果（使用分词匹配）
   const searchedFolders = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim();
     if (!q) return view === "panel" ? folders : [];
-    return folders.filter(f => f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q));
+    return folders.filter(f => matchSearch(f.name, f.path, "", q));
   }, [searchQuery, folders, view]);
 
   // 计算器
@@ -243,7 +517,12 @@ export default function App() {
     e.preventDefault();
     setDragOverCat(null);
     if (dragAppId !== null && cat && cat !== "全部") {
-      invoke("update_app_category", { id: dragAppId, category: cat }).then(() => loadApps()).catch(e => console.warn("update category:", e));
+      invoke("update_app_category", { id: dragAppId, category: cat })
+        .then(async () => {
+          await loadApps();
+          await loadCategories();
+        })
+        .catch(e => console.warn("update category:", e));
       setDragAppId(null);
     }
   };
@@ -272,27 +551,94 @@ export default function App() {
   };
 
   // 应用操作
+  const ICON_FAILED = "__failed__"; // 图标提取失败标记，避免反复重试
   const loadIcon = async (appId: number) => {
-    if (iconCache[appId]) return;
+    if (iconCache[appId]) return; // 已缓存（包括失败标记）则跳过
     try {
       const dataUrl = await invoke<string>("get_app_icon", { appId });
-      setIconCache(prev => ({ ...prev, [appId]: dataUrl }));
-    } catch (e) { console.warn("loadIcon:", appId, e); }
+      // 缓存结果：成功=dataUrl，失败=标记值，避免反复重试拖慢其他图标
+      setIconCache(prev => ({ ...prev, [appId]: dataUrl || ICON_FAILED }));
+    } catch (e) {
+      console.warn("loadIcon:", appId, e);
+      setIconCache(prev => ({ ...prev, [appId]: ICON_FAILED }));
+    }
   };
 
+  // 图标加载：监听当前可见的应用列表（搜索结果 + 面板分类）
   useEffect(() => {
-    // 懒加载前 20 个应用的图标
-    const toLoad = filteredByCategory.slice(0, 20).filter(a => !iconCache[a.id]);
-    toLoad.forEach(a => loadIcon(a.id));
-  }, [filteredByCategory]);
+    // 合并搜索结果和面板分类中的应用，确保所有可见应用都加载图标
+    const visibleApps = view === "search" && searchQuery.trim()
+      ? searchedApps
+      : filteredByCategory;
+    const toLoad = visibleApps.filter(a => !iconCache[a.id]);
+    if (toLoad.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      // 串行加载，不设上限——所有可见应用都需要图标
+      for (const app of toLoad) {
+        if (cancelled) break;
+        await loadIcon(app.id);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [searchedApps, filteredByCategory, view, searchQuery]);
 
   const removeApp = async (id: number) => { try { await invoke("remove_app", {id}); await loadApps(); } catch (e) { console.warn("remove_app:", e); } setCm(null); };
   const togglePin = async (id: number) => { try { await invoke("toggle_pin_app", {id}); await loadApps(); } catch (e) { console.warn("toggle_pin_app:", e); } setCm(null); };
-  const updateCategory = async (id: number, category: string) => { try { await invoke("update_app_category", {id, category}); await loadApps(); } catch (e) { console.warn("update_app_category:", e); } setCm(null); };
+  const updateCategory = async (id: number, category: string) => {
+    try {
+      await invoke("update_app_category", {id, category});
+      await loadApps();
+      await loadCategories();
+    } catch (e) {
+      console.warn("update_app_category:", e);
+      showToast(String(e), "err");
+    }
+    setCm(null);
+  };
+
+  const addCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) {
+      showToast("分类名称不能为空", "err");
+      return;
+    }
+    // 前端重复校验：大小写不敏感匹配，避免不友好的后端错误消息
+    if (categoryNames.some(c => c.toLowerCase() === name.toLowerCase())) {
+      showToast("分类已存在", "err");
+      return;
+    }
+    try {
+      const created = await invoke<string>("add_category", { name });
+      await loadCategories();
+      setActiveCategory(created);
+      setNewCategoryName("");
+      setShowCategoryInput(false);
+      showToast(`已创建分类：${created}`, "ok");
+    } catch (e) {
+      console.warn("add_category:", e);
+      showToast(String(e), "err");
+    }
+  };
 
   const addFolder = async () => {
     if (!folderName || !folderPath) return;
     try { await invoke("add_folder", {name: folderName, path: folderPath}); await loadFolders(); setShowFolderInput(false); setFolderName(""); setFolderPath(""); } catch (e) { console.warn("add_folder:", e); }
+  };
+  const pickFolderPath = async () => {
+    try {
+      const selected = await dialogOpen({ directory: true, title: "选择文件夹" });
+      if (selected && typeof selected === "string") {
+        setFolderPath(selected);
+        // 自动用文件夹名作为名称（如果名称为空）
+        if (!folderName) {
+          const folderNameFromPath = selected.split(/[\\/]/).filter(Boolean).pop() || "";
+          setFolderName(folderNameFromPath);
+        }
+      }
+    } catch (e) {
+      console.warn("pickFolderPath:", e);
+    }
   };
   const removeFolder = async (id: number) => { try { await invoke("remove_folder", {id}); await loadFolders(); } catch (e) { console.warn("remove_folder:", e); } };
 
@@ -313,7 +659,7 @@ export default function App() {
   const [catInput, setCatInput] = useState("");
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-background/95 backdrop-blur-xl rounded-2xl overflow-hidden border border-border shadow-2xl" onContextMenu={e=>e.preventDefault()} onDrop={handleDrop} onDragOver={e=>e.preventDefault()}>
+    <div className="h-screen w-screen flex flex-col bg-background/70 backdrop-blur-xl rounded-2xl overflow-hidden border border-border shadow-2xl" onContextMenu={e=>e.preventDefault()} onDrop={handleDrop} onDragOver={e=>e.preventDefault()}>
       {/* 标题栏 */}
       <div className="titlebar flex items-center justify-between px-4 py-1.5">
         <div className="flex items-center gap-2">
@@ -375,8 +721,8 @@ export default function App() {
                   <button key={app.id} onClick={() => launchApp(app)}
                     className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-secondary hover:bg-accent shrink-0 transition-colors">
                     <div className="w-5 h-5 rounded overflow-hidden bg-muted flex items-center justify-center text-[10px] font-bold shrink-0">
-                      {iconCache[app.id]
-                        ? <img src={iconCache[app.id]} alt="" className="w-full h-full object-contain" />
+                      {iconCache[app.id] && iconCache[app.id] !== "__failed__"
+                        ? <img src={iconCache[app.id]} alt="" className="w-full h-full object-contain app-icon" />
                         : <span>{app.name.charAt(0)}</span>}
                     </div>
                     <span className="text-xs whitespace-nowrap">{highlight(app.name, searchQuery)}</span>
@@ -393,18 +739,49 @@ export default function App() {
       {view === "panel" && !searchQuery.trim() && (
         <div className="px-4 pb-2 overflow-x-auto scrollbar-none">
           <div className="flex gap-1.5">
-            {categories.filter(c => c !== "全部").map(cat => (
-              <div key={cat} className="relative"
-                onDragOver={e => onDragOverTab(e, cat)}
-                onDragLeave={onDragLeaveTab}
-                onDrop={e => onDropOnTab(e, cat)}>
-                <button onClick={() => setActiveCategory(cat)}
-                  className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-all ${activeCategory === cat ? "bg-primary text-primary-foreground" : dragOverCat === cat && dragAppId ? "ring-2 ring-primary bg-secondary" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
-                  {cat}
+            {categories.map(cat => (
+              cat === "全部" ? (
+                <button key={cat} onClick={() => setActiveCategory(cat)}
+                  className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-all ${activeCategory === cat ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
+                  全部
                 </button>
-              </div>
+              ) : (
+                <div key={cat} className="relative"
+                  onDragOver={e => onDragOverTab(e, cat)}
+                  onDragLeave={onDragLeaveTab}
+                  onDrop={e => onDropOnTab(e, cat)}>
+                  <button onClick={() => setActiveCategory(cat)}
+                    className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-all ${activeCategory === cat ? "bg-primary text-primary-foreground" : dragOverCat === cat && dragAppId ? "ring-2 ring-primary bg-secondary" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
+                    {cat}
+                  </button>
+                </div>
+              )
             ))}
+            <button
+              onClick={() => setShowCategoryInput(v => !v)}
+              aria-label="添加新分类"
+              className="whitespace-nowrap px-3 py-1.5 text-xs rounded-full border border-dashed border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            >
+              + 分类
+            </button>
           </div>
+          {showCategoryInput && (
+            <div className="flex gap-1.5 mt-2">
+              <input
+                value={newCategoryName}
+                onChange={e => setNewCategoryName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") addCategory();
+                  if (e.key === "Escape") { setShowCategoryInput(false); setNewCategoryName(""); }
+                }}
+                placeholder="新分类名称"
+                className="flex-1 h-8 px-2 rounded-lg bg-secondary text-xs border border-border focus:outline-none focus:ring-1 focus:ring-ring"
+                autoFocus
+              />
+              <button onClick={addCategory} className="h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs">创建</button>
+              <button onClick={() => { setShowCategoryInput(false); setNewCategoryName(""); }} className="h-8 px-3 rounded-lg bg-secondary text-xs text-muted-foreground">取消</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -420,6 +797,11 @@ export default function App() {
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             <LayoutGrid className="w-12 h-12 mb-3 opacity-20" />
             <p className="text-sm">该分类暂无应用</p>
+          </div>
+        ) : displayItems.length === 0 && !searchQuery.trim() && view === "search" ? (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+            <Search className="w-12 h-12 mb-3 opacity-20" />
+            <p className="text-sm">输入关键词搜索应用</p>
           </div>
         ) : displayItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
@@ -489,10 +871,17 @@ export default function App() {
           {showFolderInput && (
             <div className="flex flex-col gap-1.5 mb-2">
               <input value={folderName} onChange={e => setFolderName(e.target.value)} placeholder="名称" className="h-8 px-2 rounded-lg bg-secondary text-xs border border-border focus:outline-none focus:ring-1 focus:ring-ring" />
-              <input value={folderPath} onChange={e => setFolderPath(e.target.value)} placeholder="路径 (如 C:\Users\...)" className="h-8 px-2 rounded-lg bg-secondary text-xs border border-border focus:outline-none focus:ring-1 focus:ring-ring" />
               <div className="flex gap-1">
-                <button onClick={addFolder} className="flex-1 h-7 rounded-lg bg-primary text-primary-foreground text-xs">添加</button>
-                <button onClick={() => setShowFolderInput(false)} className="h-7 px-3 rounded-lg bg-secondary text-xs text-muted-foreground">取消</button>
+                <button onClick={pickFolderPath} className="h-8 px-3 rounded-lg bg-secondary text-xs text-muted-foreground hover:text-foreground border border-border shrink-0">
+                  <Folder className="w-3.5 h-3.5 inline mr-1" />选择文件夹
+                </button>
+                {folderPath && (
+                  <span className="h-8 px-2 flex items-center text-xs text-muted-foreground truncate bg-secondary rounded-lg border border-border flex-1 min-w-0">{folderPath}</span>
+                )}
+              </div>
+              <div className="flex gap-1">
+                <button onClick={addFolder} disabled={!folderName || !folderPath} className="flex-1 h-7 rounded-lg bg-primary text-primary-foreground text-xs disabled:opacity-50">添加</button>
+                <button onClick={() => { setShowFolderInput(false); setFolderName(""); setFolderPath(""); }} className="h-7 px-3 rounded-lg bg-secondary text-xs text-muted-foreground">取消</button>
               </div>
             </div>
           )}

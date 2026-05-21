@@ -89,6 +89,8 @@ impl Classifier {
             return Ok(0);
         }
 
+        // 收集所有新分类名，用于同步到 categories 表
+        let mut new_categories: Vec<String> = Vec::new();
         let mut count = 0;
         for (id, name, path) in &apps {
             let category = self.classify(name, path);
@@ -96,7 +98,16 @@ impl Classifier {
                 "UPDATE apps SET category = ?1 WHERE id = ?2",
                 rusqlite::params![category, id],
             )?;
+            new_categories.push(category);
             count += 1;
+        }
+
+        // 同步新分类到 categories 表（避免分类重复）
+        for cat in &new_categories {
+            conn.execute(
+                "INSERT OR IGNORE INTO categories (name, sort_order) VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM categories))",
+                rusqlite::params![cat],
+            )?;
         }
 
         Ok(count)

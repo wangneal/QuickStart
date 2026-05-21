@@ -2,16 +2,14 @@ use std::fs;
 
 use crate::classifier::Classifier;
 use crate::scanner;
+use super::AppState;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::State;
-
-/// 数据库路径的托管状态
-pub struct DbPath(pub PathBuf);
+use tauri::{Emitter, State};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppItem {
+pub struct AppData {
     pub id: i64,
     pub name: String,
     pub path: String,
@@ -29,42 +27,14 @@ pub struct FolderItem {
     pub sort_order: i64,
 }
 
-/// 获取应用列表
-#[tauri::command]
-pub fn get_app_list(db_path: State<'_, DbPath>) -> Result<Vec<AppItem>, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, name, path, icon_path, category, use_count, is_pinned
-             FROM apps ORDER BY is_pinned DESC, use_count DESC, name ASC",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let apps = stmt
-        .query_map([], |row| {
-            Ok(AppItem {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                path: row.get(2)?,
-                icon_path: row.get(3)?,
-                category: row.get(4)?,
-                use_count: row.get(5)?,
-                is_pinned: row.get::<_, i64>(6)? != 0,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-
-    Ok(apps)
-}
-
 /// 获取分类列表（用于面板）
 #[tauri::command]
-pub fn get_categories(db_path: State<'_, DbPath>) -> Result<Vec<String>, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+pub fn get_categories(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT DISTINCT category FROM apps ORDER BY category")
+        .prepare(
+            "SELECT name FROM categories WHERE TRIM(name) <> '' ORDER BY sort_order ASC, name ASC",
+        )
         .map_err(|e| e.to_string())?;
 
     let cats = stmt
@@ -76,17 +46,58 @@ pub fn get_categories(db_path: State<'_, DbPath>) -> Result<Vec<String>, String>
     Ok(cats)
 }
 
+/// 新建分类（支持空分类）
+#[tauri::command]
+pub fn add_category(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    let category = name.trim().to_string();
+    if category.is_empty() {
+        return Err("分类名称不能为空".to_string());
+    }
+    if category == "全部" {
+        return Err("不能使用保留分类名称".to_string());
+    }
+
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM categories WHERE name = ?1",
+            [&category],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if exists {
+        return Err("分类已存在".to_string());
+    }
+
+    let next_order: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM categories",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT INTO categories (name, sort_order) VALUES (?1, ?2)",
+        rusqlite::params![category, next_order],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(category)
+}
+
 /// 添加应用
 #[tauri::command]
 pub fn add_app(
-    db_path: State<'_, DbPath>,
+    state: State<'_, AppState>,
     name: String,
     path: String,
     icon_path: Option<String>,
     category: Option<String>,
     app_handle: tauri::AppHandle,
-) -> Result<AppItem, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+) -> Result<AppData, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     let cat = category.unwrap_or_else(|| "未分类".to_string());
 
     // 检查是否已存在
@@ -105,6 +116,12 @@ pub fn add_app(
     // 提取图标
     let icon = icon_path.or_else(|| scanner::extract_and_cache_icon(&path, &app_handle));
 
+    // 同步分类到 categories 表（避免分类不一致）
+    conn.execute(
+        "INSERT OR IGNORE INTO categories (name, sort_order) VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM categories))",
+        [&cat],
+    ).map_err(|e| e.to_string())?;
+
     conn.execute(
         "INSERT INTO apps (name, path, icon_path, category) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![name, path, icon, cat],
@@ -112,7 +129,7 @@ pub fn add_app(
     .map_err(|e| e.to_string())?;
 
     let id = conn.last_insert_rowid();
-    Ok(AppItem {
+    Ok(AppData {
         id,
         name,
         path,
@@ -125,8 +142,8 @@ pub fn add_app(
 
 /// 删除应用
 #[tauri::command]
-pub fn remove_app(db_path: State<'_, DbPath>, id: i64) -> Result<(), String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+pub fn remove_app(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM apps WHERE id = ?1", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -135,23 +152,50 @@ pub fn remove_app(db_path: State<'_, DbPath>, id: i64) -> Result<(), String> {
 /// 更新应用分类
 #[tauri::command]
 pub fn update_app_category(
-    db_path: State<'_, DbPath>,
+    state: State<'_, AppState>,
     id: i64,
     category: String,
 ) -> Result<(), String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+    let category = category.trim().to_string();
+    if category.is_empty() {
+        return Err("分类名称不能为空".to_string());
+    }
+    if category == "全部" {
+        return Err("不能使用保留分类名称".to_string());
+    }
+
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+
+    // 事务保护：INSERT + UPDATE 在同一事务中，避免 sort_order 子查询竞态
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT OR IGNORE INTO categories (name, sort_order)
+         VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM categories))",
+        [&category],
+    )
+    .map_err(|e| {
+        let _ = conn.execute_batch("ROLLBACK");
+        e.to_string()
+    })?;
+
     conn.execute(
         "UPDATE apps SET category = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         rusqlite::params![category, id],
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        let _ = conn.execute_batch("ROLLBACK");
+        e.to_string()
+    })?;
+
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// 切换固定状态
 #[tauri::command]
-pub fn toggle_pin_app(db_path: State<'_, DbPath>, id: i64) -> Result<bool, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+pub fn toggle_pin_app(state: State<'_, AppState>, id: i64) -> Result<bool, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     let current: bool = conn
         .query_row(
             "SELECT is_pinned FROM apps WHERE id = ?1",
@@ -172,8 +216,8 @@ pub fn toggle_pin_app(db_path: State<'_, DbPath>, id: i64) -> Result<bool, Strin
 
 /// 记录应用使用（增加使用频率）
 #[tauri::command]
-pub fn record_app_launch(db_path: State<'_, DbPath>, id: i64) -> Result<(), String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+pub fn record_app_launch(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "UPDATE apps SET use_count = use_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
         [id],
@@ -182,20 +226,31 @@ pub fn record_app_launch(db_path: State<'_, DbPath>, id: i64) -> Result<(), Stri
     Ok(())
 }
 
-/// 触发全量扫描
+/// 触发全量扫描（异步，不阻塞 UI）
 #[tauri::command]
-pub fn scan_apps(
-    db_path: State<'_, DbPath>,
-    app_handle: tauri::AppHandle,
-) -> Result<scanner::ScanResult, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
-    scanner::scan_and_save(&conn, &app_handle)
+pub async fn scan_apps(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<scanner::ScanResult, String> {
+    let path = state.db_path.to_string_lossy().to_string();
+    let handle = app_handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+        let result = scanner::scan_and_save(&conn, &handle)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+            rusqlite::params!["last_scan_time", &now.to_string()],
+        ).map_err(|e| e.to_string())?;
+        let _ = handle.emit("scan-complete", result.clone());
+        Ok(result)
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// 获取文件夹列表
 #[tauri::command]
-pub fn get_folder_list(db_path: State<'_, DbPath>) -> Result<Vec<FolderItem>, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+pub fn get_folder_list(state: State<'_, AppState>) -> Result<Vec<FolderItem>, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, name, path, sort_order FROM folders ORDER BY sort_order ASC, name ASC")
         .map_err(|e| e.to_string())?;
@@ -219,11 +274,11 @@ pub fn get_folder_list(db_path: State<'_, DbPath>) -> Result<Vec<FolderItem>, St
 /// 添加文件夹
 #[tauri::command]
 pub fn add_folder(
-    db_path: State<'_, DbPath>,
+    state: State<'_, AppState>,
     name: String,
     path: String,
 ) -> Result<FolderItem, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
 
     // 获取最大排序值
     let max_order: i64 = conn
@@ -249,8 +304,8 @@ pub fn add_folder(
 
 /// 删除文件夹
 #[tauri::command]
-pub fn remove_folder(db_path: State<'_, DbPath>, id: i64) -> Result<(), String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+pub fn remove_folder(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM folders WHERE id = ?1", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -258,54 +313,58 @@ pub fn remove_folder(db_path: State<'_, DbPath>, id: i64) -> Result<(), String> 
 
 /// 获取应用图标（按需提取+缓存，返回 base64 data URL）
 #[tauri::command]
-pub fn get_app_icon(
-    db_path: State<'_, DbPath>,
+pub async fn get_app_icon(
+    state: State<'_, AppState>,
     app_id: i64,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+    let db = state.db_path.to_string_lossy().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = Connection::open(&db).map_err(|e| e.to_string())?;
+        let app_path: String = conn
+            .query_row("SELECT path FROM apps WHERE id = ?1", [app_id], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
 
-    // 查出应用路径和已有 icon_path
-    let (app_path, existing_icon): (String, Option<String>) = conn
-        .query_row(
-            "SELECT path, icon_path FROM apps WHERE id = ?1",
-            [app_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(|e| e.to_string())?;
+        let icon_path: Option<String> = conn
+            .query_row("SELECT icon_path FROM apps WHERE id = ?1", [app_id], |row| row.get(0))
+            .ok();
 
-    // 已有缓存且文件存在，直接读取
-    if let Some(ref icon) = existing_icon {
-        if std::path::Path::new(icon).exists() {
-            let data = fs::read(icon).map_err(|e| format!("读图标失败: {}", e))?;
-            use base64::Engine;
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-            return Ok(format!("data:image/png;base64,{}", b64));
+        if let Some(path) = icon_path.as_deref() {
+            if path == "__failed__" {
+                return Ok(String::new());
+            }
+            if !path.is_empty() && std::path::Path::new(path).exists() {
+                if let Ok(data) = fs::read(path) {
+                    use base64::Engine;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    return Ok(format!("data:image/png;base64,{}", b64));
+                }
+            }
         }
-    }
 
-    // 提取图标
-    if let Some(cached) = scanner::extract_and_cache_icon(&app_path, &app_handle) {
-        // 更新数据库
-        let _ = conn.execute(
-            "UPDATE apps SET icon_path = ?1 WHERE id = ?2",
-            rusqlite::params![cached, app_id],
-        );
-        // 读取并返回
-        if let Ok(data) = fs::read(&cached) {
-            use base64::Engine;
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-            return Ok(format!("data:image/png;base64,{}", b64));
+        if let Some(cached) = scanner::extract_and_cache_icon(&app_path, &app_handle) {
+            let _ = conn.execute(
+                "UPDATE apps SET icon_path = ?1 WHERE id = ?2",
+                rusqlite::params![cached, app_id],
+            );
+            if let Ok(data) = fs::read(&cached) {
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                return Ok(format!("data:image/png;base64,{}", b64));
+            }
         }
-    }
 
-    Err("无法提取图标".into())
+        let _ = conn.execute("UPDATE apps SET icon_path = '__failed__' WHERE id = ?1", [app_id]);
+        Ok(String::new())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 自动分类未归类应用（检查设置开关）
 #[tauri::command]
-pub fn classify_uncategorized(db_path: State<'_, DbPath>) -> Result<usize, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+pub fn classify_uncategorized(state: State<'_, AppState>) -> Result<usize, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
 
     // 检查是否启用自动分类
     let enabled: String = conn
@@ -319,18 +378,24 @@ pub fn classify_uncategorized(db_path: State<'_, DbPath>) -> Result<usize, Strin
     classifier.classify_uncategorized(&conn).map_err(|e| e.to_string())
 }
 
+/// 获取数据库路径
+#[tauri::command]
+pub fn get_db_path(state: State<'_, AppState>) -> String {
+    state.db_path.to_string_lossy().to_string()
+}
+
 /// 获取设置
 #[tauri::command]
-pub fn get_setting(db_path: State<'_, DbPath>, key: String) -> Result<String, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+pub fn get_setting(state: State<'_, AppState>, key: String) -> Result<String, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     conn.query_row("SELECT value FROM settings WHERE key = ?1", [&key], |row| row.get(0))
         .map_err(|e| e.to_string())
 }
 
 /// 更新设置
 #[tauri::command]
-pub fn set_setting(db_path: State<'_, DbPath>, key: String, value: String) -> Result<(), String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+pub fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
         rusqlite::params![key, value],
@@ -338,20 +403,14 @@ pub fn set_setting(db_path: State<'_, DbPath>, key: String, value: String) -> Re
     Ok(())
 }
 
-/// 获取数据库路径（用于前端调试）
-#[tauri::command]
-pub fn get_db_path(db_path: State<'_, DbPath>) -> Result<String, String> {
-    Ok(db_path.0.to_string_lossy().to_string())
-}
-
 /// 刷新单个应用图标
 #[tauri::command]
 pub fn refresh_app_icon(
-    db_path: State<'_, DbPath>,
+    state: State<'_, AppState>,
     id: i64,
     app_handle: tauri::AppHandle,
 ) -> Result<Option<String>, String> {
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
 
     let app_path: String = conn
         .query_row("SELECT path FROM apps WHERE id = ?1", [id], |row| {
@@ -434,13 +493,10 @@ pub async fn check_update() -> Result<String, String> {
     Ok(tag)
 }
 
-/// 启动应用（cmd /c start，支持 lnk/exe/任意关联文件）
+/// 启动应用（支持 lnk/exe/URL/任意关联文件）
 #[tauri::command]
 pub fn launch_app(path: String) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/c", "start", "", &path])
-        .spawn()
-        .map_err(|e| format!("启动失败: {}", e))?;
+    open::that(&path).map_err(|e| format!("启动失败: {}", e))?;
     Ok(())
 }
 
@@ -455,4 +511,42 @@ pub fn reveal_in_explorer(path: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("打开失败: {}", e))?;
     Ok(())
+}
+
+/// 获取应用列表
+#[tauri::command]
+pub fn get_app_list(state: State<'_, AppState>) -> Result<Vec<AppData>, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, path, icon_path, category, use_count, is_pinned FROM apps ORDER BY is_pinned DESC, use_count DESC, name ASC")
+        .map_err(|e| e.to_string())?;
+
+    let apps = stmt
+        .query_map([], |row| {
+            Ok(AppData {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                path: row.get(2)?,
+                icon_path: row.get(3)?,
+                category: row.get(4)?,
+                use_count: row.get(5)?,
+                is_pinned: row.get::<_, i64>(6)? != 0,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(apps)
+}
+
+/// 获取上次扫描时间（Unix 秒字符串）
+#[tauri::command]
+pub fn get_last_scan_time(state: State<'_, AppState>) -> Result<String, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = 'last_scan_time'",
+        [],
+        |row| row.get::<_, String>(0),
+    ).map_err(|e| e.to_string())
 }

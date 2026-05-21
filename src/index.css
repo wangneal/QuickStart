@@ -53,8 +53,11 @@
   * {
     @apply border-border;
   }
+  html, body {
+    background: transparent;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-transparent text-foreground;
   }
 }
 
@@ -85,4 +88,10 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* 图标渲染优化 — 防止缩放模糊 */
+.app-icon {
+  image-rendering: auto;
+  -webkit-font-smoothing: antialiased;
 }

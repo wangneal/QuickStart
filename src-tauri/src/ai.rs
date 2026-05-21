@@ -3,11 +3,49 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// SSE 事件类型
+enum SseEvent {
+    Data(String),
+    Done,
+}
+
+/// 解析 SSE 行，返回事件或 None（忽略非数据行）
+fn parse_sse_line(line: &str) -> Option<SseEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    if line.starts_with(':') {
+        return None; // 忽略注释行
+    }
+    if line == "data: [DONE]" {
+        return Some(SseEvent::Done);
+    }
+    if let Some(data) = line.strip_prefix("data: ") {
+        return Some(SseEvent::Data(data.to_string()));
+    }
+    None // 忽略 event:, id:, retry: 等行
+}
+
 /// AI 聊天消息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+}
+
+/// 验证路径是否在允许的基础目录内，防止路径遍历攻击
+fn validate_path_within_base(path: &Path, base: &Path) -> Result<(), String> {
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| format!("无效路径: {}", e))?;
+    let canonical_base = base
+        .canonicalize()
+        .map_err(|e| format!("无效基础路径: {}", e))?;
+    if !canonical_path.starts_with(&canonical_base) {
+        return Err("目标路径超出允许范围".into());
+    }
+    Ok(())
 }
 
 /// 文件夹条目
@@ -55,6 +93,12 @@ pub async fn ai_chat_stream(
                 .await
                 .map_err(|e| format!("请求失败: {}", e))?;
 
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("API request failed: {} - {}", status, body).into());
+            }
+
             let mut stream = resp.bytes_stream();
             use futures_util::StreamExt;
             let mut buffer = String::new();
@@ -63,26 +107,23 @@ pub async fn ai_chat_stream(
                 let chunk = chunk.map_err(|e| format!("流读取失败: {}", e))?;
                 buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-                // 解析 SSE 格式
                 while let Some(line_end) = buffer.find('\n') {
-                    let line = buffer[..line_end].trim().to_string();
+                    let line = buffer[..line_end].to_string();
                     buffer = buffer[line_end + 1..].to_string();
 
-                    if line.is_empty() || line.starts_with(':') {
-                        continue;
-                    }
-                    if line == "data: [DONE]" {
-                        break;
-                    }
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(content) = parsed["choices"][0]["delta"]["content"]
-                                .as_str()
-                                .map(|s| s.to_string())
-                            {
-                                let _ = app_handle.emit(event_id, content);
+                    match parse_sse_line(&line) {
+                        Some(SseEvent::Done) => break,
+                        Some(SseEvent::Data(data)) => {
+                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+                                if let Some(content) = parsed["choices"][0]["delta"]["content"]
+                                    .as_str()
+                                    .map(|s| s.to_string())
+                                {
+                                    let _ = app_handle.emit(event_id, content);
+                                }
                             }
                         }
+                        None => {}
                     }
                 }
             }
@@ -119,6 +160,12 @@ pub async fn ai_chat_stream(
                 .await
                 .map_err(|e| format!("Claude 请求失败: {}", e))?;
 
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("API request failed: {} - {}", status, body).into());
+            }
+
             let mut stream = resp.bytes_stream();
             use futures_util::StreamExt;
             let mut buffer = String::new();
@@ -128,14 +175,11 @@ pub async fn ai_chat_stream(
                 buffer.push_str(&String::from_utf8_lossy(&chunk));
 
                 while let Some(line_end) = buffer.find('\n') {
-                    let line = buffer[..line_end].trim().to_string();
+                    let line = buffer[..line_end].to_string();
                     buffer = buffer[line_end + 1..].to_string();
 
-                    if line.is_empty() || line.starts_with(':') {
-                        continue;
-                    }
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(SseEvent::Data(data)) = parse_sse_line(&line) {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
                             if parsed["type"] == "content_block_delta" {
                                 if let Some(text) = parsed["delta"]["text"].as_str() {
                                     let _ = app_handle.emit(event_id, text.to_string());
@@ -169,6 +213,12 @@ pub async fn ai_chat_stream(
                 .send()
                 .await
                 .map_err(|e| format!("Ollama 请求失败: {}", e))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("API request failed: {} - {}", status, body).into());
+            }
 
             let mut stream = resp.bytes_stream();
             use futures_util::StreamExt;
@@ -233,7 +283,7 @@ pub fn list_directory(path: String) -> Result<Vec<DirEntry>, String> {
 
 /// 获取应用列表（供 AI 工具调用）
 #[tauri::command]
-pub fn ai_get_apps(app_handle: AppHandle) -> Result<Vec<crate::commands::AppItem>, String> {
+pub fn ai_get_apps(app_handle: AppHandle) -> Result<Vec<crate::commands::AppData>, String> {
     let app_dir = app_handle
         .path()
         .app_data_dir()
@@ -247,7 +297,7 @@ pub fn ai_get_apps(app_handle: AppHandle) -> Result<Vec<crate::commands::AppItem
 
     let apps = stmt
         .query_map([], |row| {
-            Ok(crate::commands::AppItem {
+            Ok(crate::commands::AppData {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 path: row.get(2)?,
@@ -265,14 +315,28 @@ pub fn ai_get_apps(app_handle: AppHandle) -> Result<Vec<crate::commands::AppItem
 }
 
 /// LLM 自动分类未归类应用
+
+/// 从 AI 响应中提取 JSON，支持 markdown 代码块包裹
+fn extract_json_from_response(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let text = text.strip_prefix("```json").unwrap_or(text);
+    let text = text.strip_prefix("```").unwrap_or(text);
+    let text = text.strip_suffix("```").unwrap_or(text);
+    let text = text.trim();
+
+    let start = text.find('{')?;
+    let end = text.rfind('}')? + 1;
+    Some(&text[start..end])
+}
+
 #[tauri::command]
 pub async fn ai_classify_apps(
     _app_handle: AppHandle,
-    db_path: tauri::State<'_, crate::commands::DbPath>,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<usize, String> {
     // 先读 DB，收集数据后关闭连接（避免 Send 问题）
     let (names, provider, api_key, model, base_url) = {
-        let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+        let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
 
         let mut stmt = conn.prepare("SELECT name FROM apps WHERE category = '未分类' OR category = '' LIMIT 50")
             .map_err(|e| e.to_string())?;
@@ -327,29 +391,52 @@ pub async fn ai_classify_apps(
     let result: serde_json::Value = resp.json().await.map_err(|e| format!("解析响应失败: {}", e))?;
     let content = result["choices"][0]["message"]["content"].as_str().ok_or("AI 返回为空")?;
 
-    let json_str = content.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+    let json_str = extract_json_from_response(content)
+        .ok_or_else(|| format!("无法从 AI 响应中提取 JSON。原始响应: {}", content))?;
     let items: Vec<serde_json::Value> = serde_json::from_str(json_str)
         .map_err(|e| format!("解析分类结果失败: {}. 原始响应: {}", e, content))?;
 
-    // 再开 DB 连接写结果
-    let conn = Connection::open(&db_path.0).map_err(|e| e.to_string())?;
+    // 用共享连接写结果（避免绕过 Mutex 开新连接）
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     let mut count = 0;
+    // 收集 AI 分类产生的新分类名，用于同步到 categories 表
+    let mut new_categories: Vec<String> = Vec::new();
     for item in &items {
         if let (Some(name), Some(cat)) = (item["name"].as_str(), item["category"].as_str()) {
             if conn.execute(
                 "UPDATE apps SET category = ?1 WHERE LOWER(name) = LOWER(?2) AND (category = '未分类' OR category = '')",
                 rusqlite::params![cat, name],
-            ).map_err(|e| e.to_string())? > 0 { count += 1; }
+            ).map_err(|e| e.to_string())? > 0 {
+                count += 1;
+            }
+            new_categories.push(cat.to_string());
         }
+    }
+    // 同步新分类到 categories 表（避免分类重复）
+    for cat in &new_categories {
+        conn.execute(
+            "INSERT OR IGNORE INTO categories (name, sort_order) VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM categories))",
+            rusqlite::params![cat],
+        ).map_err(|e| e.to_string())?;
     }
     Ok(count)
 }
 
 /// 安全整理文件夹：只移动文件到目标目录，不删除不重命名
 #[tauri::command]
-pub fn organize_folder(source: String, target_dir: String) -> Result<String, String> {
+pub fn organize_folder(app_handle: AppHandle, source: String, target_dir: String) -> Result<String, String> {
+    let base_dir = app_handle
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
     let src = Path::new(&source);
     let dst_dir = Path::new(&target_dir);
+
+    // 验证源路径在允许范围内
+    validate_path_within_base(src, &base_dir)?;
+    // 验证目标路径在允许范围内
+    validate_path_within_base(dst_dir, &base_dir)?;
 
     if !src.exists() { return Err("源文件不存在".into()); }
     if !dst_dir.is_dir() { return Err("目标目录不存在".into()); }

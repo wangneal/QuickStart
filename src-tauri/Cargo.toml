@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
@@ -27,3 +28,8 @@ base64 = "0.22"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
+window-vibrancy = "0.5"
+open = "5"
+lnk = "0.5"
+windows = { version = "0.58", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_Storage_FileSystem"] }
+png = "0.17"

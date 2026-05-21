@@ -1,5 +1,5 @@
 use rusqlite::{Connection, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use tauri::Manager;
 
@@ -14,7 +14,7 @@ pub fn get_db_path(app_handle: &AppHandle) -> PathBuf {
 }
 
 /// 初始化数据库表
-pub fn init_database(db_path: &PathBuf) -> Result<()> {
+pub fn init_database(db_path: &Path) -> Result<()> {
     let conn = Connection::open(db_path)?;
 
     // 应用表
@@ -30,6 +30,13 @@ pub fn init_database(db_path: &PathBuf) -> Result<()> {
             is_pinned   INTEGER DEFAULT 0,
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS categories (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL UNIQUE,
+            sort_order  INTEGER DEFAULT 0,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS folders (
@@ -52,6 +59,13 @@ pub fn init_database(db_path: &PathBuf) -> Result<()> {
             model       TEXT,
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+
+        INSERT OR IGNORE INTO categories (name, sort_order)
+        SELECT DISTINCT TRIM(category),
+               (SELECT COALESCE(MAX(sort_order), 0) FROM categories) + ROW_NUMBER() OVER ()
+        FROM apps
+        WHERE TRIM(COALESCE(category, '')) <> ''
+          AND TRIM(category) <> '全部';
 
         -- 插入默认设置
         INSERT OR IGNORE INTO settings (key, value) VALUES

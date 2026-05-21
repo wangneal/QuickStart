@@ -20,16 +20,43 @@ export default function AIChat({ onClose }: Props) {
   const [listening, setListening] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const speechRef = useRef<any>(null);
+  const speechRef = useRef<SpeechRecognition | null>(null);
   const [streamingText, setStreamingText] = useState("");
 
-  // 配置（正式应来自设置，现用默认）
-  const config = {
+  // 配置（从设置读取）
+  const [config, setConfig] = useState<{
+    provider: "openai" | "claude" | "ollama" | "custom";
+    model: string;
+    baseUrl: string;
+    apiKey: string;
+  }>({
     provider: "openai",
     model: "gpt-4o-mini",
     baseUrl: "https://api.openai.com/v1",
-    apiKey: "", // 用户需在设置中配置
-  };
+    apiKey: "",
+  });
+
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const [provider, apiKey, model, baseUrl] = await Promise.all([
+          invoke<string | null>("get_setting", { key: "ai_provider" }),
+          invoke<string | null>("get_setting", { key: "ai_api_key" }),
+          invoke<string | null>("get_setting", { key: "ai_model" }),
+          invoke<string | null>("get_setting", { key: "ai_base_url" }),
+        ]);
+        setConfig({
+          provider: (provider as "openai" | "claude" | "ollama" | "custom") || "openai",
+          apiKey: apiKey || "",
+          model: model || "gpt-4o-mini",
+          baseUrl: baseUrl || "https://api.openai.com/v1",
+        });
+      } catch (e) {
+        console.warn("加载 AI 设置失败:", e);
+      }
+    }
+    loadSettings();
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -119,7 +146,7 @@ export default function AIChat({ onClose }: Props) {
   }, [loading]);
 
   const toggleListening = () => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     if (listening) {
       speechRef.current?.stop();
@@ -130,7 +157,7 @@ export default function AIChat({ onClose }: Props) {
     recognition.lang = "zh-CN";
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.onresult = (e: any) => {
+    recognition.onresult = (e: SpeechRecognitionEvent) => {
       setInput(prev => prev + e.results[0][0].transcript);
       setListening(false);
     };

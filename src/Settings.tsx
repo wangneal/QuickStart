@@ -7,7 +7,9 @@ interface Props { onClose: () => void; }
 const KEYS = {
   ai_provider: "openai", ai_api_key: "", ai_base_url: "", ai_model: "gpt-4o-mini",
   auto_start: "true", auto_classify: "true", theme: "system",
-};
+} as const;
+
+type SettingKey = keyof typeof KEYS;
 
 export default function Settings({ onClose }: Props) {
   const [s, setS] = useState<Record<string, string>>({...KEYS});
@@ -17,18 +19,31 @@ export default function Settings({ onClose }: Props) {
   useEffect(() => {
     (async () => {
       const r: Record<string,string> = {};
-      for (const k of Object.keys(KEYS)) {
-        try { r[k] = await invoke<string>("get_setting", { key: k }); } catch { r[k] = (KEYS as any)[k]; }
+      for (const k of Object.keys(KEYS) as SettingKey[]) {
+        try { r[k] = await invoke<string>("get_setting", { key: k }); } catch (e) { console.warn("get_setting:", k, e); r[k] = KEYS[k]; }
       }
       setS(r); setLoading(false);
     })();
   }, []);
 
+  // System theme: listen to OS color scheme changes
+  useEffect(() => {
+    if (s.theme !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      if (mq.matches) document.documentElement.classList.add("dark");
+      else document.documentElement.classList.remove("dark");
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, [s.theme]);
+
   const set = (k: string, v: string) => setS(p => ({...p, [k]: v}));
 
   const save = async () => {
     for (const [k, v] of Object.entries(s)) {
-      try { await invoke("set_setting", { key: k, value: v }); } catch {}
+      try { await invoke("set_setting", { key: k, value: v }); } catch (e) { console.warn("set_setting:", k, e); }
     }
     // 应用主题
     if (s.theme === "dark") document.documentElement.classList.add("dark");
