@@ -17,6 +17,26 @@ pub fn get_db_path(app_handle: &AppHandle) -> PathBuf {
 pub fn init_database(db_path: &Path) -> Result<()> {
     let conn = Connection::open(db_path)?;
 
+    // 迁移：为已有 folders 表添加 category 列（SQLite 不支持 IF NOT EXISTS ALTER）
+    {
+        let has_category: bool = conn
+            .prepare("PRAGMA table_info(folders)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|col| col == "category");
+        if !has_category {
+            conn.execute_batch(
+                "ALTER TABLE folders ADD COLUMN category TEXT DEFAULT '未分类';
+                 CREATE TABLE IF NOT EXISTS folder_categories (
+                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                     name        TEXT NOT NULL UNIQUE,
+                     sort_order  INTEGER DEFAULT 0,
+                     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );"
+            )?;
+        }
+    }
+
     // 搜索历史表
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS search_history (
@@ -54,6 +74,14 @@ pub fn init_database(db_path: &Path) -> Result<()> {
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             name        TEXT NOT NULL,
             path        TEXT NOT NULL,
+            category    TEXT DEFAULT '未分类',
+            sort_order  INTEGER DEFAULT 0,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS folder_categories (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL UNIQUE,
             sort_order  INTEGER DEFAULT 0,
             created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
         );
@@ -77,6 +105,16 @@ pub fn init_database(db_path: &Path) -> Result<()> {
         FROM apps
         WHERE TRIM(COALESCE(category, '')) <> ''
           AND TRIM(category) <> '全部';
+
+        -- 迁移：为已有 folders 表添加 category 列（SQLite ALTER TABLE 只能 ADD COLUMN）
+        -- PRAGMA table_info 检查列是否存在，不存在则添加
+        INSERT OR IGNORE INTO folder_categories (name, sort_order)
+        SELECT DISTINCT TRIM(category),
+               (SELECT COALESCE(MAX(sort_order), 0) FROM folder_categories) + ROW_NUMBER() OVER ()
+        FROM folders
+        WHERE TRIM(COALESCE(category, '')) <> ''
+          AND TRIM(category) <> '全部'
+          AND TRIM(category) <> '未分类';
 
         -- 插入默认设置
         INSERT OR IGNORE INTO settings (key, value) VALUES

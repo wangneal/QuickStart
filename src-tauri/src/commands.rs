@@ -24,6 +24,7 @@ pub struct FolderItem {
     pub id: i64,
     pub name: String,
     pub path: String,
+    pub category: String,
     pub sort_order: i64,
 }
 
@@ -252,7 +253,7 @@ pub async fn scan_apps(state: State<'_, AppState>, app_handle: tauri::AppHandle)
 pub fn get_folder_list(state: State<'_, AppState>) -> Result<Vec<FolderItem>, String> {
     let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, path, sort_order FROM folders ORDER BY sort_order ASC, name ASC")
+        .prepare("SELECT id, name, path, category, sort_order FROM folders ORDER BY sort_order ASC, name ASC")
         .map_err(|e| e.to_string())?;
 
     let folders = stmt
@@ -261,7 +262,8 @@ pub fn get_folder_list(state: State<'_, AppState>) -> Result<Vec<FolderItem>, St
                 id: row.get(0)?,
                 name: row.get(1)?,
                 path: row.get(2)?,
-                sort_order: row.get(3)?,
+                category: row.get(3)?,
+                sort_order: row.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -277,8 +279,16 @@ pub fn add_folder(
     state: State<'_, AppState>,
     name: String,
     path: String,
+    category: Option<String>,
 ) -> Result<FolderItem, String> {
     let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+    let cat = category.unwrap_or_else(|| "未分类".to_string());
+
+    // 同步分类到 folder_categories 表
+    conn.execute(
+        "INSERT OR IGNORE INTO folder_categories (name, sort_order) VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM folder_categories))",
+        [&cat],
+    ).map_err(|e| e.to_string())?;
 
     // 获取最大排序值
     let max_order: i64 = conn
@@ -288,8 +298,8 @@ pub fn add_folder(
         .unwrap_or(0);
 
     conn.execute(
-        "INSERT INTO folders (name, path, sort_order) VALUES (?1, ?2, ?3)",
-        rusqlite::params![name, path, max_order + 1],
+        "INSERT INTO folders (name, path, category, sort_order) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![name, path, cat, max_order + 1],
     )
     .map_err(|e| e.to_string())?;
 
@@ -298,6 +308,7 @@ pub fn add_folder(
         id,
         name,
         path,
+        category: cat,
         sort_order: max_order + 1,
     })
 }
@@ -591,5 +602,107 @@ pub fn clear_search_history(state: State<'_, AppState>) -> Result<(), String> {
     let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM search_history", [])
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 获取文件夹分类列表
+#[tauri::command]
+pub fn get_folder_categories(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT name FROM folder_categories WHERE TRIM(name) <> '' ORDER BY sort_order ASC, name ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let cats = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(cats)
+}
+
+/// 新建文件夹分类
+#[tauri::command]
+pub fn add_folder_category(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    let category = name.trim().to_string();
+    if category.is_empty() {
+        return Err("分类名称不能为空".to_string());
+    }
+    if category == "全部" {
+        return Err("不能使用保留分类名称".to_string());
+    }
+
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM folder_categories WHERE name = ?1",
+            [&category],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if exists {
+        return Err("分类已存在".to_string());
+    }
+
+    let next_order: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM folder_categories",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT INTO folder_categories (name, sort_order) VALUES (?1, ?2)",
+        rusqlite::params![category, next_order],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(category)
+}
+
+/// 更新文件夹分类
+#[tauri::command]
+pub fn update_folder_category(
+    state: State<'_, AppState>,
+    id: i64,
+    category: String,
+) -> Result<(), String> {
+    let category = category.trim().to_string();
+    if category.is_empty() {
+        return Err("分类名称不能为空".to_string());
+    }
+    if category == "全部" {
+        return Err("不能使用保留分类名称".to_string());
+    }
+
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT OR IGNORE INTO folder_categories (name, sort_order)
+         VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM folder_categories))",
+        [&category],
+    )
+    .map_err(|e| {
+        let _ = conn.execute_batch("ROLLBACK");
+        e.to_string()
+    })?;
+
+    conn.execute(
+        "UPDATE folders SET category = ?1 WHERE id = ?2",
+        rusqlite::params![category, id],
+    )
+    .map_err(|e| {
+        let _ = conn.execute_batch("ROLLBACK");
+        e.to_string()
+    })?;
+
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
     Ok(())
 }
