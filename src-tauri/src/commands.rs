@@ -550,3 +550,46 @@ pub fn get_last_scan_time(state: State<'_, AppState>) -> Result<String, String> 
         |row| row.get::<_, String>(0),
     ).map_err(|e| e.to_string())
 }
+
+/// 记录搜索历史
+#[tauri::command]
+pub fn record_search(state: State<'_, AppState>, query: String) -> Result<(), String> {
+    let q = query.trim().to_string();
+    if q.is_empty() { return Ok(()); }
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+    // 去重：如果已有相同 query，更新时间戳而非重复插入
+    conn.execute(
+        "INSERT INTO search_history (query) VALUES (?1)",
+        [&q],
+    ).map_err(|e| e.to_string())?;
+    // 保留最近 100 条，删除更早的
+    conn.execute(
+        "DELETE FROM search_history WHERE id NOT IN (SELECT id FROM search_history ORDER BY searched_at DESC LIMIT 100)",
+        [],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 获取搜索历史（按时间倒序，去重）
+#[tauri::command]
+pub fn get_search_history(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT query FROM search_history GROUP BY query ORDER BY MAX(searched_at) DESC LIMIT 20")
+        .map_err(|e| e.to_string())?;
+    let history = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(history)
+}
+
+/// 清空搜索历史
+#[tauri::command]
+pub fn clear_search_history(state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM search_history", [])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}

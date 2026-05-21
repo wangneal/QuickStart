@@ -17,6 +17,17 @@ pub fn get_db_path(app_handle: &AppHandle) -> PathBuf {
 pub fn init_database(db_path: &Path) -> Result<()> {
     let conn = Connection::open(db_path)?;
 
+    // 搜索历史表
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS search_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            query TEXT NOT NULL,
+            searched_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_search_history_query ON search_history(query);
+        CREATE INDEX IF NOT EXISTS idx_search_history_at ON search_history(searched_at);"
+    )?;
+
     // 应用表
     conn.execute_batch(
         "

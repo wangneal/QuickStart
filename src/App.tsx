@@ -8,7 +8,7 @@ import SettingsPanel from "./Settings";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import {
   Search, Mic, Settings, X, Minus, Maximize2, Folder, Trash2, Pin, ScanLine,
-  ExternalLink, Calculator, LayoutGrid, List, Plus, FolderPlus, FileType, Bot,
+  ExternalLink, Calculator, LayoutGrid, List, Plus, FolderPlus, FileType, Bot, Clock,
 } from "lucide-react";
 
 // ---------- 工具函数 ----------
@@ -284,6 +284,7 @@ export default function App() {
   const [iconCache, setIconCache] = useState<Record<number, string>>({});
   const [toast, setToast] = useState<{msg:string;type:"ok"|"err"} | null>(null);
   const [fileResults, setFileResults] = useState<FileResult[]>([]);
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
 
   const showToast = (msg:string, type:"ok"|"err"="ok") => {
     setToast({msg,type});
@@ -346,6 +347,8 @@ export default function App() {
       await loadApps();
       await loadFolders();
       await loadCategories();
+      // 加载搜索历史
+      try { const h = await invoke<string[]>("get_search_history"); if (h) setSearchHistory(h); } catch (e) { console.warn("loadSearchHistory:", e); }
       // 检查是否需要扫描：DB 为空 或 超过 24 小时未扫描
       const lastScan = await invoke<string>("get_last_scan_time");
       const needScan = !lastScan || (Date.now() / 1000 - parseInt(lastScan, 10)) > 86400;
@@ -500,15 +503,35 @@ export default function App() {
   const launchApp = async (app: AppItem) => {
     try {
       invoke("record_app_launch", {id: app.id}).catch(e => console.warn("record launch:", e));
+      // 记录搜索历史（仅在搜索模式下）
+      if (searchQuery.trim() && view === "search") {
+        invoke("record_search", { query: searchQuery.trim() }).then(async () => {
+          try { const h = await invoke<string[]>("get_search_history"); if (h) setSearchHistory(h); } catch { /* ignore */ }
+        }).catch(e => console.warn("record_search:", e));
+      }
       await invoke("launch_app", { path: app.path });
       await getCurrentWindow().hide();
     } catch (e) { console.warn("launchApp error:", app.path, e); showToast("启动失败: " + e, "err"); }
   };
   const openFolder = async (path: string) => {
-    try { await invoke("launch_app", { path }); } catch (e) { console.warn("openFolder:", e); showToast("打开文件夹失败: " + e, "err"); }
+    try {
+      if (searchQuery.trim() && view === "search") {
+        invoke("record_search", { query: searchQuery.trim() }).then(async () => {
+          try { const h = await invoke<string[]>("get_search_history"); if (h) setSearchHistory(h); } catch { /* ignore */ }
+        }).catch(() => {});
+      }
+      await invoke("launch_app", { path });
+    } catch (e) { console.warn("openFolder:", e); showToast("打开文件夹失败: " + e, "err"); }
   };
   const openFile = async (path: string) => {
-    try { await invoke("launch_app", { path }); } catch (e) { console.warn("openFile:", e); showToast("打开文件失败: " + e, "err"); }
+    try {
+      if (searchQuery.trim() && view === "search") {
+        invoke("record_search", { query: searchQuery.trim() }).then(async () => {
+          try { const h = await invoke<string[]>("get_search_history"); if (h) setSearchHistory(h); } catch { /* ignore */ }
+        }).catch(() => {});
+      }
+      await invoke("launch_app", { path });
+    } catch (e) { console.warn("openFile:", e); showToast("打开文件失败: " + e, "err"); }
   };
   // ---------- 拖拽分类（HTML5 原生） ----------
   const [dragAppId, setDragAppId] = useState<number | null>(null);
@@ -809,10 +832,60 @@ export default function App() {
             <p className="text-sm">该分类暂无应用</p>
           </div>
         ) : displayItems.length === 0 && !searchQuery.trim() && view === "search" ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <Search className="w-12 h-12 mb-3 opacity-20" />
-            <p className="text-sm">输入关键词搜索应用</p>
-          </div>
+          (() => {
+            const topApps = [...apps].sort((a,b) => b.use_count - a.use_count).slice(0, 8).filter(a => a.use_count > 0);
+            return (
+              <div className="flex flex-col gap-4 py-2">
+                {/* 搜索历史 */}
+                {searchHistory.length > 0 && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />搜索历史
+                      </span>
+                      <button onClick={async () => {
+                        try { await invoke("clear_search_history"); setSearchHistory([]); } catch (e) { console.warn("clearSearchHistory:", e); }
+                      }} className="text-xs text-muted-foreground/50 hover:text-destructive transition-colors">清空</button>
+                    </div>
+                    <div className="flex gap-1.5 overflow-x-auto scrollbar-none">
+                      {searchHistory.slice(0, 10).map(q => (
+                        <button key={q} onClick={() => { setSearchQuery(q); inputRef.current?.focus(); }}
+                          className="px-2.5 py-1.5 rounded-lg bg-secondary hover:bg-accent text-xs whitespace-nowrap transition-colors">
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* 常用应用 */}
+                {topApps.length > 0 && (
+                  <div>
+                    <span className="text-xs font-medium text-muted-foreground mb-1.5 block">常用应用</span>
+                    <div className="grid grid-cols-5 gap-2">
+                      {topApps.map(app => (
+                        <button key={app.id} onClick={() => launchApp(app)}
+                          className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl bg-secondary hover:bg-accent transition-colors">
+                          <div className="w-10 h-10 rounded-lg overflow-hidden bg-muted flex items-center justify-center text-sm font-bold">
+                            {iconCache[app.id] && iconCache[app.id] !== "__failed__"
+                              ? <img src={iconCache[app.id]} alt="" className="w-full h-full object-contain app-icon" />
+                              : <span>{app.name.charAt(0)}</span>}
+                          </div>
+                          <span className="text-xs text-center text-muted-foreground truncate w-full">{app.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* 两者都无时显示空提示 */}
+                {searchHistory.length === 0 && topApps.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                    <Search className="w-12 h-12 mb-3 opacity-20" />
+                    <p className="text-sm">输入关键词搜索应用</p>
+                  </div>
+                )}
+              </div>
+            );
+          })()
         ) : displayItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             <Search className="w-12 h-12 mb-3 opacity-20" />
