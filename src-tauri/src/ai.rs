@@ -255,8 +255,45 @@ pub async fn ai_chat_stream(
 
 /// 列出指定目录的内容（用于 AI 工具调用）
 #[tauri::command]
-pub fn list_directory(path: String) -> Result<Vec<DirEntry>, String> {
+pub fn list_directory(app_handle: AppHandle, path: String) -> Result<Vec<DirEntry>, String> {
     let dir = Path::new(&path);
+
+    // 获取允许的基础路径
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    // 构建允许目录列表：app data + 用户常见目录
+    let allowed_dirs = {
+        let mut dirs = vec![app_data_dir.clone()];
+
+        // 添加用户目录（从 USERPROFILE 环境变量）
+        if let Ok(user_profile) = std::env::var("USERPROFILE") {
+            let user_path = Path::new(&user_profile);
+            for name in &["Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music"] {
+                let sub_dir = user_path.join(name);
+                if sub_dir.is_dir() {
+                    dirs.push(sub_dir);
+                }
+            }
+        }
+
+        dirs
+    };
+
+    // 验证路径在允许范围内
+    let mut path_valid = false;
+    for base_dir in &allowed_dirs {
+        if validate_path_within_base(dir, base_dir).is_ok() {
+            path_valid = true;
+            break;
+        }
+    }
+    if !path_valid {
+        return Err("路径超出允许范围".to_string());
+    }
+
     if !dir.is_dir() {
         return Err("路径不是有效的目录".to_string());
     }

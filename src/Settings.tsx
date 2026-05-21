@@ -46,8 +46,16 @@ export default function Settings({ onClose }: Props) {
       try { await invoke("set_setting", { key: k, value: v }); } catch (e) { console.warn("set_setting:", k, e); }
     }
     // 应用主题
-    if (s.theme === "dark") document.documentElement.classList.add("dark");
-    else document.documentElement.classList.remove("dark");
+    if (s.theme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else if (s.theme === "light") {
+      document.documentElement.classList.remove("dark");
+    } else {
+      // system: follow OS preference
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      if (mq.matches) document.documentElement.classList.add("dark");
+      else document.documentElement.classList.remove("dark");
+    }
     setSaved(true); setTimeout(() => setSaved(false), 1500);
   };
 

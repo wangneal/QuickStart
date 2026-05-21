@@ -22,6 +22,7 @@ export default function AIChat({ onClose }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const speechRef = useRef<SpeechRecognition | null>(null);
   const [streamingText, setStreamingText] = useState("");
+  const unlistenFnsRef = useRef<Array<() => void>>([]);
 
   // 配置（从设置读取）
   const [config, setConfig] = useState<{
@@ -66,6 +67,19 @@ export default function AIChat({ onClose }: Props) {
     inputRef.current?.focus();
   }, []);
 
+  // 清理事件监听器的辅助函数
+  const cleanupListeners = () => {
+    for (const fn of unlistenFnsRef.current) {
+      try { fn(); } catch { /* already unlistened */ }
+    }
+    unlistenFnsRef.current = [];
+  };
+
+  // 组件卸载时清理监听器
+  useEffect(() => {
+    return () => cleanupListeners();
+  }, []);
+
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
 
@@ -76,6 +90,9 @@ export default function AIChat({ onClose }: Props) {
     setLoading(true);
     setStreamingText("");
 
+    // 清理旧监听器，防止快速连续调用时累积
+    cleanupListeners();
+
     try {
       // 监听 AI 事件
       const { listen } = await import("@tauri-apps/api/event");
@@ -84,9 +101,11 @@ export default function AIChat({ onClose }: Props) {
       });
 
       const unlistenDone = await listen("ai:done", () => {
-        unlistenToken();
-        unlistenDone();
+        cleanupListeners();
       });
+
+      // 存储到 ref 以便统一清理
+      unlistenFnsRef.current = [unlistenToken, unlistenDone];
 
       // 发送消息（加入安全指令和整理规则）
       const safetyMsg = { role: "system", content: [
@@ -132,6 +151,8 @@ export default function AIChat({ onClose }: Props) {
     } catch (e) {
       console.error("AI 请求失败:", e);
       setStreamingText(`请求失败: ${e}. 请先在设置中配置 API Key。`);
+      // 错误时也要清理监听器（ai:done 不会触发）
+      cleanupListeners();
     } finally {
       setLoading(false);
     }

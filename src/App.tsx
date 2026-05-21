@@ -117,7 +117,7 @@ function highlight(text: string, query: string): React.ReactNode {
   let lastEnd = 0;
   for (const [s, e] of merged) {
     if (s > lastEnd) parts.push(text.slice(lastEnd, s));
-    parts.push(<mark className="bg-primary/20 text-foreground rounded px-0.5">{text.slice(s, e)}</mark>);
+    parts.push(<mark key={s} className="bg-primary/20 text-foreground rounded px-0.5">{text.slice(s, e)}</mark>);
     lastEnd = e;
   }
   if (lastEnd < text.length) parts.push(text.slice(lastEnd));
@@ -314,13 +314,14 @@ export default function App() {
   const doScan = useCallback(async () => {
     setScanning(true);
     try {
-      void invoke<ScanAppsResult>("scan_apps").catch(e => {
-        console.warn("scan_apps:", e);
-        setScanning(false);
-        showToast("扫描失败", "err");
-      });
-    } catch (e) { console.warn("scan_apps:", e); showToast("扫描失败", "err"); }
-  }, [loadApps]);
+      await invoke<ScanAppsResult>("scan_apps");
+    } catch (e) {
+      console.warn("scan_apps:", e);
+      showToast("扫描失败", "err");
+    } finally {
+      setScanning(false);
+    }
+  }, []);
 
   // 版本更新检查
   useEffect(() => {
@@ -472,6 +473,14 @@ export default function App() {
     fileResults.forEach(f => { if (searchQuery.trim()) items.push({type:"file", item:f}); });
     return items;
   }, [searchedApps, searchedFolders, fileResults, showCalc, calcResult, searchQuery]);
+
+  useEffect(() => {
+    if (displayItems.length === 0) {
+      setSelectedIndex(0);
+    } else if (selectedIndex >= displayItems.length) {
+      setSelectedIndex(displayItems.length - 1);
+    }
+  }, [displayItems.length, selectedIndex]);
 
   // 按键
   const handleKeyDown = (e: React.KeyboardEvent) => {

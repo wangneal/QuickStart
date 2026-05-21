@@ -26,11 +26,11 @@ This project uses the GSD (Get Shit Done) workflow.
 
 ### Phase progression
 
-Phase 1: 基础壳层 (Tauri + window + tray + hotkey + SQLite)
-Phase 2: 应用扫描与管理 (auto-scan + manual add + icons)
-Phase 3: 搜索 + 语音 (fuzzy search + Web Speech API)
-Phase 4: 应用面板 + 文件夹 (grid panel + AI classification + folders)
-Phase 5: AI 对话 + 整理 (chat + folder organization, multi-API)
-Phase 6: 设置 + 发布 (settings + installer + CI/CD + GitHub)
+Phase 1: 基础壳层 ✅ Complete (Tauri + window + tray + hotkey + SQLite)
+Phase 2: 应用扫描与管理 ✅ Complete (auto-scan + manual add + icons)
+Phase 3: 搜索 + 语音 ✅ Complete (fuzzy search + Web Speech API)
+Phase 4: 应用面板 + 文件夹 ✅ Complete (grid panel + AI classification + folders)
+Phase 5: AI 对话 + 整理 ✅ Complete (chat + folder organization, multi-API)
+Phase 6: 设置 + 发布 ⚠️ Partial (settings done, installer + CI/CD pending)
 
-Current phase: Phase 1 (not started)
+Current phase: All phases implemented (v1.0). Settings UI complete, installer and CI/CD pipeline remain.
