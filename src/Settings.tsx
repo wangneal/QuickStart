@@ -12,13 +12,13 @@ const KEYS = {
 type SettingKey = keyof typeof KEYS;
 
 export default function Settings({ onClose }: Props) {
-  const [s, setS] = useState<Record<string, string>>({...KEYS});
+  const [s, setS] = useState<Record<string, string>>({ ...KEYS });
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const r: Record<string,string> = {};
+      const r: Record<string, string> = {};
       for (const k of Object.keys(KEYS) as SettingKey[]) {
         try { r[k] = await invoke<string>("get_setting", { key: k }); } catch (e) { console.warn("get_setting:", k, e); r[k] = KEYS[k]; }
       }
@@ -39,7 +39,7 @@ export default function Settings({ onClose }: Props) {
     return () => mq.removeEventListener("change", apply);
   }, [s.theme]);
 
-  const set = (k: string, v: string) => setS(p => ({...p, [k]: v}));
+  const set = (k: string, v: string) => setS(p => ({ ...p, [k]: v }));
 
   const save = async () => {
     for (const [k, v] of Object.entries(s)) {
@@ -63,8 +63,8 @@ export default function Settings({ onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={onClose}>
-      <div className="w-[420px] max-h-[80vh] flex flex-col rounded-2xl bg-popover border border-border shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+      <div className="w-[420px] max-h-[80vh] flex flex-col rounded-xl bg-popover border border-border shadow-2xl overflow-hidden animate-scale-in" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/60">
           <h2 className="text-base font-semibold">设置</h2>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"><X className="w-4 h-4" /></button>
         </div>
@@ -74,7 +74,7 @@ export default function Settings({ onClose }: Props) {
           <section>
             <h3 className="text-sm font-medium mb-3 flex items-center gap-2"><Monitor className="w-4 h-4" /> 外观</h3>
             <div className="flex gap-2">
-              {(["system","light","dark"] as const).map(t => (
+              {(["system", "light", "dark"] as const).map(t => (
                 <button key={t} onClick={() => set("theme", t)}
                   className={`flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg text-xs transition-colors ${s.theme === t ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>
                   {t === "system" ? <Monitor className="w-3.5 h-3.5" /> : t === "light" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
@@ -116,8 +116,8 @@ export default function Settings({ onClose }: Props) {
             <h3 className="text-sm font-medium mb-3 flex items-center gap-2"><Cpu className="w-4 h-4" /> AI 配置</h3>
             <div className="space-y-2.5">
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">提供商</label>
-                <select value={s.ai_provider} onChange={e => set("ai_provider", e.target.value)} className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                <label className="text-xs text-foreground mb-1 block">提供商</label>
+                <select value={s.ai_provider} onChange={e => set("ai_provider", e.target.value)} className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50">
                   <option value="openai">OpenAI</option>
                   <option value="claude">Claude (Anthropic)</option>
                   <option value="ollama">Ollama (本地)</option>
@@ -126,25 +126,25 @@ export default function Settings({ onClose }: Props) {
               </div>
               {(s.ai_provider === "openai" || s.ai_provider === "claude" || s.ai_provider === "custom") && (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">API Key</label>
-                  <input type="password" value={s.ai_api_key} onChange={e => set("ai_api_key", e.target.value)} className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+                  <label className="text-xs text-foreground mb-1 block">API Key</label>
+                  <input type="password" value={s.ai_api_key} onChange={e => set("ai_api_key", e.target.value)} className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50" />
                 </div>
               )}
               {s.ai_provider === "custom" && (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Base URL</label>
-                  <input value={s.ai_base_url} onChange={e => set("ai_base_url", e.target.value)} placeholder="https://api.example.com/v1" className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+                  <label className="text-xs text-foreground mb-1 block">Base URL</label>
+                  <input value={s.ai_base_url} onChange={e => set("ai_base_url", e.target.value)} placeholder="https://api.example.com/v1" className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50" />
                 </div>
               )}
               {s.ai_provider !== "ollama" ? (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">模型</label>
-                  <input value={s.ai_model} onChange={e => set("ai_model", e.target.value)} className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+                  <label className="text-xs text-foreground mb-1 block">模型</label>
+                  <input value={s.ai_model} onChange={e => set("ai_model", e.target.value)} className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50" />
                 </div>
               ) : (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">模型（如 llama3.2）</label>
-                  <input value={s.ai_model} onChange={e => set("ai_model", e.target.value)} placeholder="llama3.2" className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+                  <label className="text-xs text-foreground mb-1 block">模型（如 llama3.2）</label>
+                  <input value={s.ai_model} onChange={e => set("ai_model", e.target.value)} placeholder="llama3.2" className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50" />
                   <p className="text-[10px] text-muted-foreground mt-1">Ollama 默认地址: http://localhost:11434</p>
                 </div>
               )}
@@ -154,7 +154,7 @@ export default function Settings({ onClose }: Props) {
 
         <div className="border-t border-border px-5 py-3 space-y-2">
           <p className="text-[10px] text-muted-foreground text-center">主题即改即生效，快捷键和开机自启需要重启应用</p>
-          <button onClick={save} className="w-full h-10 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity">
+          <button onClick={save} className="w-full h-10 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-sm transition-opacity">
             {saved ? "✓ 已保存" : "保存设置"}
           </button>
         </div>

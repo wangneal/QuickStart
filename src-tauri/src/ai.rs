@@ -271,7 +271,14 @@ pub fn list_directory(app_handle: AppHandle, path: String) -> Result<Vec<DirEntr
         // 添加用户目录（从 USERPROFILE 环境变量）
         if let Ok(user_profile) = std::env::var("USERPROFILE") {
             let user_path = Path::new(&user_profile);
-            for name in &["Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music"] {
+            for name in &[
+                "Desktop",
+                "Documents",
+                "Downloads",
+                "Pictures",
+                "Videos",
+                "Music",
+            ] {
                 let sub_dir = user_path.join(name);
                 if sub_dir.is_dir() {
                     dirs.push(sub_dir);
@@ -329,7 +336,7 @@ pub fn ai_get_apps(app_handle: AppHandle) -> Result<Vec<crate::commands::AppData
     let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare("SELECT id, name, path, icon_path, category, use_count, is_pinned FROM apps ORDER BY category, name")
+        .prepare("SELECT id, name, path, icon_path, category, use_count, is_pinned, COALESCE(sort_order, 0) FROM apps ORDER BY category, name")
         .map_err(|e| e.to_string())?;
 
     let apps = stmt
@@ -342,6 +349,7 @@ pub fn ai_get_apps(app_handle: AppHandle) -> Result<Vec<crate::commands::AppData
                 category: row.get(4)?,
                 use_count: row.get(5)?,
                 is_pinned: row.get::<_, i64>(6)? != 0,
+                sort_order: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -375,26 +383,50 @@ pub async fn ai_classify_apps(
     let (names, provider, api_key, model, base_url) = {
         let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
 
-        let mut stmt = conn.prepare("SELECT name FROM apps WHERE category = '未分类' OR category = '' LIMIT 50")
+        let mut stmt = conn
+            .prepare("SELECT name FROM apps WHERE category = '未分类' OR category = '' LIMIT 50")
             .map_err(|e| e.to_string())?;
-        let names: Vec<String> = stmt.query_map([], |row| row.get(0))
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
 
-        let provider: String = conn.query_row("SELECT value FROM settings WHERE key = 'ai_provider'", [], |r| r.get(0))
+        let provider: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'ai_provider'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or_default();
-        let api_key: String = conn.query_row("SELECT value FROM settings WHERE key = 'ai_api_key'", [], |r| r.get(0))
+        let api_key: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'ai_api_key'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or_default();
-        let model: String = conn.query_row("SELECT value FROM settings WHERE key = 'ai_model'", [], |r| r.get(0))
+        let model: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'ai_model'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or_else(|_| "gpt-4o-mini".into());
-        let base_url: String = conn.query_row("SELECT value FROM settings WHERE key = 'ai_base_url'", [], |r| r.get(0))
+        let base_url: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'ai_base_url'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or_default();
 
         (names, provider, api_key, model, base_url)
     }; // conn 在这里 drop
 
-    if names.is_empty() { return Ok(0); }
+    if names.is_empty() {
+        return Ok(0);
+    }
     if provider.is_empty() || api_key.is_empty() {
         return Err("请在设置中配置 AI 提供商和 API Key".into());
     }
@@ -419,14 +451,22 @@ pub async fn ai_classify_apps(
     });
 
     let client = reqwest::Client::new();
-    let resp = client.post(&url)
+    let resp = client
+        .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .json(&body)
-        .send().await.map_err(|e| format!("API 请求失败: {}", e))?;
+        .send()
+        .await
+        .map_err(|e| format!("API 请求失败: {}", e))?;
 
-    let result: serde_json::Value = resp.json().await.map_err(|e| format!("解析响应失败: {}", e))?;
-    let content = result["choices"][0]["message"]["content"].as_str().ok_or("AI 返回为空")?;
+    let result: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析响应失败: {}", e))?;
+    let content = result["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or("AI 返回为空")?;
 
     let json_str = extract_json_from_response(content)
         .ok_or_else(|| format!("无法从 AI 响应中提取 JSON。原始响应: {}", content))?;
@@ -461,7 +501,11 @@ pub async fn ai_classify_apps(
 
 /// 安全整理文件夹：只移动文件到目标目录，不删除不重命名
 #[tauri::command]
-pub fn organize_folder(app_handle: AppHandle, source: String, target_dir: String) -> Result<String, String> {
+pub fn organize_folder(
+    app_handle: AppHandle,
+    source: String,
+    target_dir: String,
+) -> Result<String, String> {
     let base_dir = app_handle
         .path()
         .app_data_dir()
@@ -475,8 +519,12 @@ pub fn organize_folder(app_handle: AppHandle, source: String, target_dir: String
     // 验证目标路径在允许范围内
     validate_path_within_base(dst_dir, &base_dir)?;
 
-    if !src.exists() { return Err("源文件不存在".into()); }
-    if !dst_dir.is_dir() { return Err("目标目录不存在".into()); }
+    if !src.exists() {
+        return Err("源文件不存在".into());
+    }
+    if !dst_dir.is_dir() {
+        return Err("目标目录不存在".into());
+    }
 
     let file_name = src.file_name().ok_or("无效文件名")?;
     let dest = dst_dir.join(file_name);
@@ -484,11 +532,16 @@ pub fn organize_folder(app_handle: AppHandle, source: String, target_dir: String
     // 如果目标已存在，加数字后缀
     let final_dest = if dest.exists() {
         let stem = src.file_stem().unwrap_or_default().to_string_lossy();
-        let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let ext = src
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
         let mut i = 1;
         loop {
             let candidate = dst_dir.join(format!("{}_{}{}", stem, i, ext));
-            if !candidate.exists() { break candidate; }
+            if !candidate.exists() {
+                break candidate;
+            }
             i += 1;
         }
     } else {

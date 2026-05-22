@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -10,19 +12,19 @@
     --card-foreground: 240 10% 3.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
+    --primary: 199 89% 48%;
+    --primary-foreground: 0 0% 100%;
     --secondary: 240 4.8% 95.9%;
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
+    --muted-foreground: 240 3.8% 40%;
+    --accent: 199 80% 94%;
+    --accent-foreground: 199 89% 30%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --ring: 199 89% 48%;
     --radius: 0.75rem;
   }
 
@@ -33,19 +35,19 @@
     --card-foreground: 0 0% 98%;
     --popover: 240 10% 3.9%;
     --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
+    --primary: 199 89% 55%;
+    --primary-foreground: 0 0% 100%;
     --secondary: 240 3.7% 15.9%;
     --secondary-foreground: 0 0% 98%;
     --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 199 50% 18%;
+    --accent-foreground: 199 80% 90%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --ring: 199 89% 55%;
   }
 }
 
@@ -53,11 +55,20 @@
   * {
     @apply border-border;
   }
+  *, *::before, *::after {
+    @apply transition-colors duration-200;
+  }
   html, body {
     background: transparent;
   }
   body {
     @apply bg-transparent text-foreground;
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
@@ -72,9 +83,9 @@
   -webkit-app-region: no-drag;
 }
 
-/* 滚动条美化 */
+/* 滚动条美化 — 更精致 */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -82,16 +93,81 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.3);
-  border-radius: 3px;
+  background: hsl(var(--muted-foreground) / 0.2);
+  border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.5);
+  background: hsl(var(--muted-foreground) / 0.4);
 }
 
 /* 图标渲染优化 — 防止缩放模糊 */
 .app-icon {
   image-rendering: auto;
   -webkit-font-smoothing: antialiased;
+  transition: transform 0.15s ease;
 }
+
+/* 选中高亮动画 */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes cat-bounce {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+@keyframes subtle-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.2); }
+  50% { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.08); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+.animate-scale-in {
+  animation: scale-in 0.15s ease-out both;
+}
+
+.animate-cat-bounce {
+  animation: cat-bounce 0.3s ease-out;
+}
+
+.animate-subtle-pulse {
+  animation: subtle-pulse 2s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.grid-cols-5 > * {
+  animation: fade-in-up 0.25s ease-out both;
+}
+
+.grid-cols-5 > *:nth-child(1) { animation-delay: 0ms; }
+.grid-cols-5 > *:nth-child(2) { animation-delay: 10ms; }
+.grid-cols-5 > *:nth-child(3) { animation-delay: 20ms; }
+.grid-cols-5 > *:nth-child(4) { animation-delay: 30ms; }
+.grid-cols-5 > *:nth-child(5) { animation-delay: 40ms; }

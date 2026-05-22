@@ -8,6 +8,7 @@ export interface AppItem {
   category: string;
   use_count: number;
   is_pinned: boolean;
+  sort_order: number;
 }
 
 interface QuickStartState {

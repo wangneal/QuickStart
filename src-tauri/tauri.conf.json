@@ -29,8 +29,8 @@
       {
         "label": "main",
         "title": "QuickStart",
-        "width": 600,
-        "height": 680,
+        "width": 720,
+        "height": 720,
         "center": false,
         "decorations": false,
         "transparent": true,

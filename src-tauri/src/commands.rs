@@ -1,8 +1,8 @@
 use std::fs;
 
+use super::AppState;
 use crate::classifier::Classifier;
 use crate::scanner;
-use super::AppState;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -17,6 +17,7 @@ pub struct AppData {
     pub category: String,
     pub use_count: i64,
     pub is_pinned: bool,
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -138,6 +139,7 @@ pub fn add_app(
         category: cat,
         use_count: 0,
         is_pinned: false,
+        sort_order: 0,
     })
 }
 
@@ -198,11 +200,9 @@ pub fn update_app_category(
 pub fn toggle_pin_app(state: State<'_, AppState>, id: i64) -> Result<bool, String> {
     let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     let current: bool = conn
-        .query_row(
-            "SELECT is_pinned FROM apps WHERE id = ?1",
-            [id],
-            |row| row.get::<_, i64>(0).map(|v| v != 0),
-        )
+        .query_row("SELECT is_pinned FROM apps WHERE id = ?1", [id], |row| {
+            row.get::<_, i64>(0).map(|v| v != 0)
+        })
         .map_err(|e| e.to_string())?;
 
     let new_val = if current { 0 } else { 1 };
@@ -229,7 +229,10 @@ pub fn record_app_launch(state: State<'_, AppState>, id: i64) -> Result<(), Stri
 
 /// 触发全量扫描（异步，不阻塞 UI）
 #[tauri::command]
-pub async fn scan_apps(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<scanner::ScanResult, String> {
+pub async fn scan_apps(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<scanner::ScanResult, String> {
     let path = state.db_path.to_string_lossy().to_string();
     let handle = app_handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -242,10 +245,13 @@ pub async fn scan_apps(state: State<'_, AppState>, app_handle: tauri::AppHandle)
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
             rusqlite::params!["last_scan_time", &now.to_string()],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
         let _ = handle.emit("scan-complete", result.clone());
         Ok(result)
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 获取文件夹列表
@@ -292,9 +298,11 @@ pub fn add_folder(
 
     // 获取最大排序值
     let max_order: i64 = conn
-        .query_row("SELECT COALESCE(MAX(sort_order), 0) FROM folders", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM folders",
+            [],
+            |row| row.get(0),
+        )
         .unwrap_or(0);
 
     conn.execute(
@@ -333,11 +341,17 @@ pub async fn get_app_icon(
     tauri::async_runtime::spawn_blocking(move || {
         let conn = Connection::open(&db).map_err(|e| e.to_string())?;
         let app_path: String = conn
-            .query_row("SELECT path FROM apps WHERE id = ?1", [app_id], |row| row.get(0))
+            .query_row("SELECT path FROM apps WHERE id = ?1", [app_id], |row| {
+                row.get(0)
+            })
             .map_err(|e| e.to_string())?;
 
         let icon_path: Option<String> = conn
-            .query_row("SELECT icon_path FROM apps WHERE id = ?1", [app_id], |row| row.get(0))
+            .query_row(
+                "SELECT icon_path FROM apps WHERE id = ?1",
+                [app_id],
+                |row| row.get(0),
+            )
             .ok();
 
         if let Some(path) = icon_path.as_deref() {
@@ -365,7 +379,10 @@ pub async fn get_app_icon(
             }
         }
 
-        let _ = conn.execute("UPDATE apps SET icon_path = '__failed__' WHERE id = ?1", [app_id]);
+        let _ = conn.execute(
+            "UPDATE apps SET icon_path = '__failed__' WHERE id = ?1",
+            [app_id],
+        );
         Ok(String::new())
     })
     .await
@@ -379,14 +396,20 @@ pub fn classify_uncategorized(state: State<'_, AppState>) -> Result<usize, Strin
 
     // 检查是否启用自动分类
     let enabled: String = conn
-        .query_row("SELECT value FROM settings WHERE key = 'auto_classify'", [], |row| row.get(0))
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'auto_classify'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap_or_else(|_| "true".into());
     if enabled != "true" {
         return Ok(0);
     }
 
     let classifier = Classifier::new();
-    classifier.classify_uncategorized(&conn).map_err(|e| e.to_string())
+    classifier
+        .classify_uncategorized(&conn)
+        .map_err(|e| e.to_string())
 }
 
 /// 获取数据库路径
@@ -399,8 +422,10 @@ pub fn get_db_path(state: State<'_, AppState>) -> String {
 #[tauri::command]
 pub fn get_setting(state: State<'_, AppState>, key: String) -> Result<String, String> {
     let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
-    conn.query_row("SELECT value FROM settings WHERE key = ?1", [&key], |row| row.get(0))
-        .map_err(|e| e.to_string())
+    conn.query_row("SELECT value FROM settings WHERE key = ?1", [&key], |row| {
+        row.get(0)
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// 更新设置
@@ -464,12 +489,16 @@ pub fn search_files(query: String) -> Result<Vec<FileResult>, String> {
     let mut seen = std::collections::HashSet::new();
 
     for dir in &dirs {
-        if !dir.is_dir() { continue; }
+        if !dir.is_dir() {
+            continue;
+        }
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with('.') || name.eq_ignore_ascii_case("desktop.ini") { continue; }
+                if name.starts_with('.') || name.eq_ignore_ascii_case("desktop.ini") {
+                    continue;
+                }
                 let lower = name.to_lowercase();
                 if lower.contains(&q) && seen.insert(lower) {
                     results.push(FileResult {
@@ -478,10 +507,14 @@ pub fn search_files(query: String) -> Result<Vec<FileResult>, String> {
                         is_dir: path.is_dir(),
                     });
                 }
-                if results.len() >= 20 { break; }
+                if results.len() >= 20 {
+                    break;
+                }
             }
         }
-        if results.len() >= 20 { break; }
+        if results.len() >= 20 {
+            break;
+        }
     }
 
     Ok(results)
@@ -492,15 +525,20 @@ pub fn search_files(query: String) -> Result<Vec<FileResult>, String> {
 pub async fn check_update() -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
-        .build().map_err(|e| e.to_string())?;
+        .build()
+        .map_err(|e| e.to_string())?;
     let resp = client
         .get("https://api.github.com/repos/wangneal/QuickStart/releases/latest")
         .header("User-Agent", "QuickStart")
         .header("Accept", "application/vnd.github.v3+json")
-        .send().await.map_err(|_| "无法连接 GitHub".to_string())?;
+        .send()
+        .await
+        .map_err(|_| "无法连接 GitHub".to_string())?;
     let json: serde_json::Value = resp.json().await.map_err(|_| "解析响应失败".to_string())?;
     let tag = json["tag_name"].as_str().unwrap_or("").to_string();
-    if tag.is_empty() { return Err("获取版本失败".into()); }
+    if tag.is_empty() {
+        return Err("获取版本失败".into());
+    }
     Ok(tag)
 }
 
@@ -515,7 +553,9 @@ pub fn launch_app(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn reveal_in_explorer(path: String) -> Result<(), String> {
     let abs = std::path::Path::new(&path);
-    if !abs.exists() { return Err("文件不存在".into()); }
+    if !abs.exists() {
+        return Err("文件不存在".into());
+    }
     std::process::Command::new("explorer")
         .arg("/select,")
         .arg(&path)
@@ -529,7 +569,7 @@ pub fn reveal_in_explorer(path: String) -> Result<(), String> {
 pub fn get_app_list(state: State<'_, AppState>) -> Result<Vec<AppData>, String> {
     let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, path, icon_path, category, use_count, is_pinned FROM apps ORDER BY is_pinned DESC, use_count DESC, name ASC")
+        .prepare("SELECT id, name, path, icon_path, category, use_count, is_pinned, COALESCE(sort_order, 0) FROM apps ORDER BY is_pinned DESC, COALESCE(sort_order, 0) ASC, use_count DESC, name ASC")
         .map_err(|e| e.to_string())?;
 
     let apps = stmt
@@ -542,6 +582,7 @@ pub fn get_app_list(state: State<'_, AppState>) -> Result<Vec<AppData>, String> 
                 category: row.get(4)?,
                 use_count: row.get(5)?,
                 is_pinned: row.get::<_, i64>(6)? != 0,
+                sort_order: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -559,20 +600,21 @@ pub fn get_last_scan_time(state: State<'_, AppState>) -> Result<String, String> 
         "SELECT value FROM settings WHERE key = 'last_scan_time'",
         [],
         |row| row.get::<_, String>(0),
-    ).map_err(|e| e.to_string())
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// 记录搜索历史
 #[tauri::command]
 pub fn record_search(state: State<'_, AppState>, query: String) -> Result<(), String> {
     let q = query.trim().to_string();
-    if q.is_empty() { return Ok(()); }
+    if q.is_empty() {
+        return Ok(());
+    }
     let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
     // 去重：如果已有相同 query，更新时间戳而非重复插入
-    conn.execute(
-        "INSERT INTO search_history (query) VALUES (?1)",
-        [&q],
-    ).map_err(|e| e.to_string())?;
+    conn.execute("INSERT INTO search_history (query) VALUES (?1)", [&q])
+        .map_err(|e| e.to_string())?;
     // 保留最近 100 条，删除更早的
     conn.execute(
         "DELETE FROM search_history WHERE id NOT IN (SELECT id FROM search_history ORDER BY searched_at DESC LIMIT 100)",
@@ -702,6 +744,99 @@ pub fn update_folder_category(
         let _ = conn.execute_batch("ROLLBACK");
         e.to_string()
     })?;
+
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 重新排序分类（拖拽排序）
+#[tauri::command]
+pub fn reorder_categories(
+    state: State<'_, AppState>,
+    category_names: Vec<String>,
+) -> Result<(), String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+
+    for (index, name) in category_names.iter().enumerate() {
+        conn.execute(
+            "UPDATE categories SET sort_order = ?1 WHERE name = ?2",
+            rusqlite::params![index as i64, name],
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK");
+            e.to_string()
+        })?;
+    }
+
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 重新排序文件夹分类（拖拽排序）
+#[tauri::command]
+pub fn reorder_folder_categories(
+    state: State<'_, AppState>,
+    category_names: Vec<String>,
+) -> Result<(), String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+
+    for (index, name) in category_names.iter().enumerate() {
+        conn.execute(
+            "UPDATE folder_categories SET sort_order = ?1 WHERE name = ?2",
+            rusqlite::params![index as i64, name],
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK");
+            e.to_string()
+        })?;
+    }
+
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 重新排序应用（拖拽排序）
+#[tauri::command]
+pub fn reorder_apps(state: State<'_, AppState>, app_ids: Vec<i64>) -> Result<(), String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+
+    for (index, id) in app_ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE apps SET sort_order = ?1 WHERE id = ?2",
+            rusqlite::params![index as i64, id],
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK");
+            e.to_string()
+        })?;
+    }
+
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reorder_folders(state: State<'_, AppState>, folder_ids: Vec<i64>) -> Result<(), String> {
+    let conn = state.db_conn.lock().map_err(|e| e.to_string())?;
+
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+
+    for (index, id) in folder_ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE folders SET sort_order = ?1 WHERE id = ?2",
+            rusqlite::params![index as i64, id],
+        )
+        .map_err(|e| {
+            let _ = conn.execute_batch("ROLLBACK");
+            e.to_string()
+        })?;
+    }
 
     conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
     Ok(())

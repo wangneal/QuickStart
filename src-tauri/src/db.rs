@@ -32,8 +32,20 @@ pub fn init_database(db_path: &Path) -> Result<()> {
                      name        TEXT NOT NULL UNIQUE,
                      sort_order  INTEGER DEFAULT 0,
                      created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-                 );"
+                 );",
             )?;
+        }
+    }
+
+    // 迁移：为 apps 表添加 sort_order 列
+    {
+        let has_sort_order: bool = conn
+            .prepare("PRAGMA table_info(apps)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|col| col == "sort_order");
+        if !has_sort_order {
+            conn.execute_batch("ALTER TABLE apps ADD COLUMN sort_order INTEGER DEFAULT 0;")?;
         }
     }
 
@@ -45,7 +57,7 @@ pub fn init_database(db_path: &Path) -> Result<()> {
             searched_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_search_history_query ON search_history(query);
-        CREATE INDEX IF NOT EXISTS idx_search_history_at ON search_history(searched_at);"
+        CREATE INDEX IF NOT EXISTS idx_search_history_at ON search_history(searched_at);",
     )?;
 
     // 应用表

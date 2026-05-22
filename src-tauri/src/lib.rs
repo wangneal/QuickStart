@@ -7,8 +7,8 @@ mod scanner;
 mod tray;
 mod window_utils;
 
-use std::sync::Mutex;
 use rusqlite::Connection;
+use std::sync::Mutex;
 use tauri::Manager;
 
 pub struct AppState {
@@ -16,7 +16,7 @@ pub struct AppState {
     pub db_conn: Mutex<Connection>,
 }
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
-use window_utils::{toggle_window, position_window_bottom_left};
+use window_utils::{position_window_bottom_left, toggle_window};
 use window_vibrancy::{apply_acrylic, apply_mica};
 
 pub fn run() {
@@ -30,8 +30,7 @@ pub fn run() {
                 .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         // Alt+Space 切换窗口显示，定位到左下角
-                        if shortcut.matches(Modifiers::ALT, Code::Space)
-                        {
+                        if shortcut.matches(Modifiers::ALT, Code::Space) {
                             if let Some(window) = app.get_webview_window("main") {
                                 toggle_window(&window);
                             }
@@ -103,12 +102,16 @@ pub fn run() {
             commands::toggle_pin_app,
             commands::record_app_launch,
             commands::scan_apps,
-commands::get_folder_list,
+            commands::get_folder_list,
             commands::add_folder,
             commands::remove_folder,
             commands::get_folder_categories,
             commands::add_folder_category,
             commands::update_folder_category,
+            commands::reorder_categories,
+            commands::reorder_folder_categories,
+            commands::reorder_apps,
+            commands::reorder_folders,
             commands::get_db_path,
             commands::get_app_icon,
             commands::classify_uncategorized,
